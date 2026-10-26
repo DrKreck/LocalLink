@@ -1,0 +1,166 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "bol-van/zapret-win-bundle",
+    "commit": "6eb463a6758fb48cd101bc55dfd057e6e9d98af1",
+    "commitDateUtc": "2026-09-18T08:43:31Z",
+    "architecture": "windows-x64"
+  },
+  "provenance": "HTTPS raw downloads; each Git blob SHA1 compared with the pinned official GitHub API tree. SHA256 locks the local bytes. This is provenance, not a malware-free guarantee or a reproducible-build attestation.",
+  "signaturePolicy": {
+    "path": "vendor/engine/WinDivert64.sys",
+    "requiredStatus": "Valid",
+    "signerThumbprint": "043589F75FCE2795E7F2CC3E526D46784D5DDAB3",
+    "observedSignerSubject": "CN=成都密思听科技有限公司, O=成都密思听科技有限公司, S=四川省, C=CN, OID.2.5.4.15=Private Organization, OID.1.3.6.1.4.1.311.60.2.1.3=CN, SERIALNUMBER=91510107MA7E8Y2876",
+    "observedTimestampSubject": "CN=\"Sectigo RSA Time Stamping Signer #3\", O=Sectigo Limited, S=Manchester, C=GB",
+    "observedSignerNotAfterUtc": "2023-05-25T23:59:59Z",
+    "observedStatus": "Valid",
+    "verificationDate": "2026-09-25"
+  },
+  "files": [
+    {
+      "path": "vendor/engine/winws2.exe",
+      "upstreamRepository": "bol-van/zapret-win-bundle",
+      "upstreamCommit": "6eb463a6758fb48cd101bc55dfd057e6e9d98af1",
+      "upstreamPath": "zapret-winws/winws2.exe",
+      "url": "https://raw.githubusercontent.com/bol-van/zapret-win-bundle/6eb463a6758fb48cd101bc55dfd057e6e9d98af1/zapret-winws/winws2.exe",
+      "sha256": "eb9807972c15f05a00416b0549d766a71c9186f8101d406e3cc6c16278164d9e",
+      "gitBlobSha1": "8ffd2def2df7dc3e8b1623fdb9a67a94e916fa21",
+      "size": 656384,
+      "role": "engine"
+    },
+    {
+      "path": "vendor/engine/WinDivert.dll",
+      "upstreamRepository": "bol-van/zapret-win-bundle",
+      "upstreamCommit": "6eb463a6758fb48cd101bc55dfd057e6e9d98af1",
+      "upstreamPath": "zapret-winws/WinDivert.dll",
+      "url": "https://raw.githubusercontent.com/bol-van/zapret-win-bundle/6eb463a6758fb48cd101bc55dfd057e6e9d98af1/zapret-winws/WinDivert.dll",
+      "sha256": "16abd6a029e65557c6a309bea7b13bf81fff4e193567582e1cddbf6719f323e0",
+      "gitBlobSha1": "2c55eeb6921351a6cad292a900f4b8d7d41c4bcc",
+      "size": 47616,
+      "role": "library"
+    },
+    {
+      "path": "vendor/engine/WinDivert64.sys",
+      "upstreamRepository": "bol-van/zapret-win-bundle",
+      "upstreamCommit": "6eb463a6758fb48cd101bc55dfd057e6e9d98af1",
+      "upstreamPath": "zapret-winws/WinDivert64.sys",
+      "url": "https://raw.githubusercontent.com/bol-van/zapret-win-bundle/6eb463a6758fb48cd101bc55dfd057e6e9d98af1/zapret-winws/WinDivert64.sys",
+      "sha256": "8da085332782708d8767bcace5327a6ec7283c17cfb85e40b03cd2323a90ddc2",
+      "gitBlobSha1": "218ccaf423ef0a67696226f9ef3a09149e4441d0",
+      "size": 94144,
+      "role": "driver"
+    },
+    {
+      "path": "vendor/engine/cygwin1.dll",
+      "upstreamRepository": "bol-van/zapret-win-bundle",
+      "upstreamCommit": "6eb463a6758fb48cd101bc55dfd057e6e9d98af1",
+      "upstreamPath": "zapret-winws/cygwin1.dll",
+      "url": "https://raw.githubusercontent.com/bol-van/zapret-win-bundle/6eb463a6758fb48cd101bc55dfd057e6e9d98af1/zapret-winws/cygwin1.dll",
+      "sha256": "103104a52e5293ce418944725df19e2bf81ad9269b9a120d71d39028e821499b",
+      "gitBlobSha1": "1bb2e05c6d5458ad7987859a17172b635e87b9c5",
+      "size": 2954293,
+      "role": "runtime",
+      "observedFileVersion": "3.4.10"
+    },
+    {
+      "path": "vendor/engine/lua/zapret-lib.lua",
+      "upstreamRepository": "bol-van/zapret-win-bundle",
+      "upstreamCommit": "6eb463a6758fb48cd101bc55dfd057e6e9d98af1",
+      "upstreamPath": "zapret-winws/lua/zapret-lib.lua",
+      "url": "https://raw.githubusercontent.com/bol-van/zapret-win-bundle/6eb463a6758fb48cd101bc55dfd057e6e9d98af1/zapret-winws/lua/zapret-lib.lua",
+      "sha256": "cb21ddedd08fa78f87c091de33bdd7e5c0bd24adfff4868078f77197c5992137",
+      "gitBlobSha1": "c954afd0718534f2eb49d67f08a291e325f68cb1",
+      "size": 93331,
+      "role": "lua"
+    },
+    {
+      "path": "vendor/engine/lua/zapret-antidpi.lua",
+      "upstreamRepository": "bol-van/zapret-win-bundle",
+      "upstreamCommit": "6eb463a6758fb48cd101bc55dfd057e6e9d98af1",
+      "upstreamPath": "zapret-winws/lua/zapret-antidpi.lua",
+      "url": "https://raw.githubusercontent.com/bol-van/zapret-win-bundle/6eb463a6758fb48cd101bc55dfd057e6e9d98af1/zapret-winws/lua/zapret-antidpi.lua",
+      "sha256": "31c9dd75b0bd55e98e5306293f2be81e9d2ecadcbbf9157394ff37dcff7dc85a",
+      "gitBlobSha1": "80f372a63774ca10ce85fd7dcd5d1e95c3f5bfb7",
+      "size": 51782,
+      "role": "lua"
+    },
+    {
+      "path": "vendor/engine/files/quic_initial_www_google_com.bin",
+      "upstreamRepository": "bol-van/zapret-win-bundle",
+      "upstreamCommit": "6eb463a6758fb48cd101bc55dfd057e6e9d98af1",
+      "upstreamPath": "zapret-winws/files/quic_initial_www_google_com.bin",
+      "url": "https://raw.githubusercontent.com/bol-van/zapret-win-bundle/6eb463a6758fb48cd101bc55dfd057e6e9d98af1/zapret-winws/files/quic_initial_www_google_com.bin",
+      "sha256": "f4589c57749f956bb30538197a521d7005f8b0a8723b4707e72405e51ddac50a",
+      "gitBlobSha1": "80a07cc8870c88be6d8ac7f9bf9dc9bb1979468b",
+      "size": 1200,
+      "role": "payload"
+    },
+    {
+      "path": "vendor/engine/licenses/ZAPRET2-MIT.txt",
+      "upstreamRepository": "bol-van/zapret2",
+      "upstreamCommit": "00f5aaa36de500971faf6db440dd7d8b25672281",
+      "upstreamPath": "docs/LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/bol-van/zapret2/00f5aaa36de500971faf6db440dd7d8b25672281/docs/LICENSE.txt",
+      "sha256": "d089978dd77d53cb6aa5dff51cfdbff617e52dd44af1ac44a6df02c6644f17d5",
+      "gitBlobSha1": "e4ce91f198f84c9a670ee922e5d41dc5cda47b5f",
+      "size": 1069,
+      "role": "license"
+    },
+    {
+      "path": "vendor/engine/licenses/WINDIVERT-LICENSE.txt",
+      "upstreamRepository": "basil00/WinDivert",
+      "upstreamCommit": "1789526ecfb9ff5397c94f9f54c1a3dc2fb60440",
+      "upstreamPath": "LICENSE",
+      "url": "https://raw.githubusercontent.com/basil00/WinDivert/1789526ecfb9ff5397c94f9f54c1a3dc2fb60440/LICENSE",
+      "sha256": "14a0cb5214d536e4fdae6aa3f5696f981eeda106cd026e9794bba489ee79d628",
+      "gitBlobSha1": "8489a8e773c33fd6f91eb67276e2d82a2d7547c3",
+      "size": 61349,
+      "role": "license"
+    },
+    {
+      "path": "vendor/engine/licenses/CYGWIN-LICENSE.txt",
+      "upstreamRepository": "cygwin/cygwin",
+      "upstreamCommit": "89a1e4a573d40b233011402f42630b970ff71291",
+      "upstreamPath": "winsup/CYGWIN_LICENSE",
+      "url": "https://raw.githubusercontent.com/cygwin/cygwin/89a1e4a573d40b233011402f42630b970ff71291/winsup/CYGWIN_LICENSE",
+      "sha256": "794433752103cf4bbb4a84a1bdb8fbc150abb1762704bb35fecc9f7f820be984",
+      "gitBlobSha1": "dba58e8dbfb2a9e833d8a05b9f8cfdf808e0f992",
+      "size": 1458,
+      "role": "license"
+    },
+    {
+      "path": "vendor/engine/licenses/CYGWIN-LGPL3.txt",
+      "upstreamRepository": "cygwin/cygwin",
+      "upstreamCommit": "89a1e4a573d40b233011402f42630b970ff71291",
+      "upstreamPath": "winsup/COPYING.LIB",
+      "url": "https://raw.githubusercontent.com/cygwin/cygwin/89a1e4a573d40b233011402f42630b970ff71291/winsup/COPYING.LIB",
+      "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+      "gitBlobSha1": "65c5ca88a67c30becee01c5a8816d964b03862f9",
+      "size": 7651,
+      "role": "license"
+    },
+    {
+      "path": "vendor/engine/licenses/CYGWIN-GPL3.txt",
+      "upstreamRepository": "cygwin/cygwin",
+      "upstreamCommit": "89a1e4a573d40b233011402f42630b970ff71291",
+      "upstreamPath": "winsup/COPYING",
+      "url": "https://raw.githubusercontent.com/cygwin/cygwin/89a1e4a573d40b233011402f42630b970ff71291/winsup/COPYING",
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+      "gitBlobSha1": "94a9ed024d3859793618152ea559a168bbcbb5e2",
+      "size": 35147,
+      "role": "license"
+    },
+    {
+      "path": "vendor/engine/licenses/CYGWIN-NEWLIB.txt",
+      "upstreamRepository": "cygwin/cygwin",
+      "upstreamCommit": "89a1e4a573d40b233011402f42630b970ff71291",
+      "upstreamPath": "COPYING.NEWLIB",
+      "url": "https://raw.githubusercontent.com/cygwin/cygwin/89a1e4a573d40b233011402f42630b970ff71291/COPYING.NEWLIB",
+      "sha256": "24d9cfecba7614ea685e74b869ac2396b252bfcf61d396999fa3805c9ddd4c58",
+      "gitBlobSha1": "2d1473639b60cbcbc1317e9bfee9273687e974bf",
+      "size": 63278,
+      "role": "license"
+    }
+  ]
+}
