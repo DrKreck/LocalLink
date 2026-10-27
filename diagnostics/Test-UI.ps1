@@ -15,7 +15,8 @@ $cases = @(
     @('ControlChromeTests','LocalLink.ControlChromeTests'),
     @('TrayLifecycleTests','TrayLifecycleTests'),
     @('StartupTrayTests','LocalLink.StartupTrayTests'),
-    @('PublicBuildTests','PublicBuildTests')
+    @('PublicBuildTests','PublicBuildTests'),
+    @('DependencyUiTests','DependencyUiTests')
 )
 foreach ($case in $cases) {
     $test = Join-Path $directory ($case[0]+'.exe')

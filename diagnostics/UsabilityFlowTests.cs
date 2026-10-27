@@ -124,7 +124,7 @@ public static class UsabilityFlowTests
         var history=(DiagnosticHistory)Value(form,"history");
         Check(!history.PersistenceAvailable&&history.Snapshot().Events.Count==0,scope+": preview creates no diagnostic history");
         var snapshot=(BugReportSnapshot)typeof(MainForm).GetMethod("CaptureBugReport",Private).Invoke(form,null);
-        Check(snapshot.AppVersion=="0.8.1.0",scope+": report has current version");
+        Check(snapshot.AppVersion=="0.8.2.0",scope+": report has current version");
         Check(snapshot.Mode>=0&&snapshot.Mode<=2,scope+": report configuration is captured");
         Check(!snapshot.FilterRunning,scope+": report cannot start a filter");
         Check(Value(form,"tray")==null&&!((Engine)Value(form,"engine")).IsRunning,scope+": report capture has no live side effects");
