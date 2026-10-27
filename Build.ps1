@@ -33,19 +33,20 @@ foreach ($entry in $lock.files) {
     New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $engine $relative) -Destination $target -Force
 }
-$sources = @('Engine.cs','ProfileEvidence.cs','Profiles.cs','Network.cs','Services.cs','AppSettings.cs','Tuning.cs','TuningReport.cs','PublicLists.cs','StartupRegistration.cs','DiagnosticHistory.cs','BugReport.cs','ContactLink.cs','VersionInfo.cs','diagnostics\DiscordDesktopDiagnostics.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$sources = @('Engine.cs','Dependencies.cs','ProfileEvidence.cs','Profiles.cs','Network.cs','Services.cs','AppSettings.cs','Tuning.cs','TuningReport.cs','PublicLists.cs','StartupRegistration.cs','DiagnosticHistory.cs','BugReport.cs','ContactLink.cs','VersionInfo.cs','diagnostics\DiscordDesktopDiagnostics.cs') | ForEach-Object { Join-Path $PSScriptRoot $_ }
 $references = @('/r:System.dll','/r:System.Core.dll','/r:System.Drawing.dll','/r:System.Windows.Forms.dll','/r:System.Net.Http.dll','/r:System.Web.Extensions.dll','/r:System.Security.dll','/r:System.Management.dll','/r:System.IO.Compression.dll','/r:System.IO.Compression.FileSystem.dll')
-$options = @('/nologo','/langversion:5','/platform:x64','/optimize+',"/resource:$lockPath,LocalLink.EngineManifest") + $references
-& $compiler @options '/target:winexe' "/win32manifest:$PSScriptRoot\app.manifest" "/out:$out\LocalLink.exe" @sources "$PSScriptRoot\Theme.cs" "$PSScriptRoot\Program.cs"
+$options = @('/nologo','/langversion:5','/platform:x64','/optimize+',"/resource:$lockPath,LocalLink.EngineManifest","/resource:$PSScriptRoot\telegram-runtime.lock.json,LocalLink.RuntimeManifest","/resource:$PSScriptRoot\dependencies.lock.json,LocalLink.DependencyManifest") + $references
+$telegram = Join-Path $out 'telegram'
+New-Item -ItemType Directory -Path $telegram -Force | Out-Null
+& $compiler @options '/target:winexe' "/out:$telegram\LocalLink.Telegram.exe" "$PSScriptRoot\telegram_bridge\Launcher.cs" "$PSScriptRoot\VersionInfo.cs"
+if ($LASTEXITCODE -ne 0) { throw 'Telegram launcher compilation failed.' }
+$payloads = @("/resource:$telegram\LocalLink.Telegram.exe,LocalLink.TelegramLauncher","/resource:$PSScriptRoot\telegram_bridge\bridge.py,LocalLink.TelegramScript","/resource:$PSScriptRoot\LocalLink.exe.config,LocalLink.TelegramConfig")
+& $compiler @options @payloads '/target:winexe' "/win32manifest:$PSScriptRoot\app.manifest" "/out:$out\LocalLink.exe" @sources "$PSScriptRoot\Theme.cs" "$PSScriptRoot\BootstrapUI.cs" "$PSScriptRoot\Program.cs"
 if ($LASTEXITCODE -ne 0) { throw 'GUI compilation failed.' }
 foreach ($tool in @(@('LocalLink.Check','LocalLink.DiagnosticsCli','DiagnosticsCli.cs'),@('LocalLink.Lists','LocalLink.ListsCli','ListsCli.cs'))) {
     & $compiler @options '/target:exe' ("/main:"+$tool[1]) ("/out:"+(Join-Path $out ($tool[0]+'.exe'))) @sources (Join-Path $PSScriptRoot $tool[2])
     if ($LASTEXITCODE -ne 0) { throw "Tool compilation failed: $($tool[0])" }
 }
-$telegram = Join-Path $out 'telegram'
-New-Item -ItemType Directory -Path $telegram -Force | Out-Null
-& $compiler @options '/target:winexe' "/out:$telegram\LocalLink.Telegram.exe" "$PSScriptRoot\telegram_bridge\Launcher.cs" "$PSScriptRoot\VersionInfo.cs"
-if ($LASTEXITCODE -ne 0) { throw 'Telegram launcher compilation failed.' }
 foreach ($name in @('bridge.py','README.md')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('telegram_bridge\'+$name)) -Destination $telegram -Force }
 if ($TelegramRuntimeDirectory) {
     $runtimeSource = [IO.Path]::GetFullPath($TelegramRuntimeDirectory)
@@ -91,7 +92,8 @@ $cases = @(
     @('LocalLink.EnginePreflight.Tests','LocalLink.EnginePreflightTests',@('diagnostics\EnginePreflightTests.cs')),
     @('LocalLink.PublicListSave.Tests','LocalLink.PublicListSaveTests',@('diagnostics\PublicListSaveTests.cs')),
     @('LocalLink.BugReport.Tests','BugReportTests',@('diagnostics\BugReportTests.cs')),
-    @('LocalLink.ContactLink.Tests','ContactLinkTests',@('diagnostics\ContactLinkTests.cs'))
+    @('LocalLink.ContactLink.Tests','ContactLinkTests',@('diagnostics\ContactLinkTests.cs')),
+    @('LocalLink.Dependencies.Tests','LocalLink.DependencyInstallerTests',@('diagnostics\DependencyInstallerTests.cs'))
 )
 foreach ($case in $cases) {
     $test = Join-Path $testDirectory ($case[0]+'.exe')
@@ -104,5 +106,5 @@ foreach ($case in $cases) {
 }
 $launcher = Start-Process -FilePath (Join-Path $telegram 'LocalLink.Telegram.exe') -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
 if ($launcher.ExitCode -ne 0) { throw 'Telegram self-test failed.' }
-@{Version='0.8.1';Edition='OpenSource';ExecutableSHA256=(Get-FileHash -LiteralPath (Join-Path $out 'LocalLink.exe') -Algorithm SHA256).Hash;OfflineTestExecutables=$cases.Count} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'build-info.json') -Encoding UTF8
+@{Version='0.8.2';Edition='OpenSource';ExecutableSHA256=(Get-FileHash -LiteralPath (Join-Path $out 'LocalLink.exe') -Algorithm SHA256).Hash;OfflineTestExecutables=$cases.Count} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'build-info.json') -Encoding UTF8
 Write-Host "Built: $out\LocalLink.exe"

@@ -42,7 +42,8 @@ namespace LocalLink
             Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
             string[] previews={"--render","--render-checks","--render-checks-dark","--render-checks-light","--render-settings","--render-dark","--render-light","--render-settings-dark","--render-settings-light","--render-dark-settings","--render-light-settings","--render-startup-dark","--render-startup-light","--render-small"};
             bool render=args.Length==2&&previews.Contains(args[0]),owned;
-            bool elevatedRestart=args.Length==1&&args[0]=="--elevated-restart";
+            bool elevatedStart=args.Length==1&&args[0]=="--elevated-start";
+            bool elevatedRestart=elevatedStart||(args.Length==1&&args[0]=="--elevated-restart");
             bool startup=args.Length==1&&args[0]==StartupRegistration.StartupArgument;
             using(var mutex=new Mutex(true,render?"Local\\LocalLink.Preview.v3":"Local\\LocalLink.UI.v1",out owned))
             {
@@ -69,7 +70,7 @@ namespace LocalLink
                     using(var restore=render?null:CreateRestoreSignal())
                     using(var form=new MainForm(render,args.Length>0&&args[0].IndexOf("-dark",StringComparison.Ordinal)>=0,args.Length>0&&args[0].IndexOf("-light",StringComparison.Ordinal)>=0,restore,true,startup,diagnostics))
                     {
-                        if(elevatedRestart&&!render)form.ShowElevatedRestartNotice();
+                        if(elevatedRestart&&!render)form.ShowElevatedRestartNotice(elevatedStart);
                         if(render)
                         {
                             form.ShowInTaskbar=false;form.StartPosition=FormStartPosition.Manual;form.Location=new Point(-32000,-32000);
@@ -104,7 +105,8 @@ namespace LocalLink
         readonly DiagnosticHistory history;readonly bool ownsHistory;
         readonly EventWaitHandle restoreSignal;
         readonly Icon applicationIcon=AppTheme.CreateApplicationIcon();
-        readonly Engine engine=new Engine(AppDomain.CurrentDomain.BaseDirectory);
+        readonly Engine engine;
+        readonly DependencyInstaller dependencies;
         readonly Label status=new Label(),summary=new Label(),detail=new Label(),listStatus=new Label();
         readonly Button primary=new ThemedButton(),check=new ThemedButton(),tune=new ThemedButton(),exportTuning=new ThemedButton(),find=new ThemedButton(),elevate=new ThemedButton(),updateLists=new ThemedButton(),telegramBridge=new ThemedButton(),startupToggle=new ThemedButton(),startupRemove=new ThemedButton();
         readonly Label startupStatus=new Label();
@@ -129,7 +131,7 @@ namespace LocalLink
         readonly string[] appearances={"system","light","dark"};
         AppTheme theme;AppSettings settings;CancellationTokenSource operation;TuningResult lastTuning;
         NotifyIcon tray;ContextMenuStrip trayMenu;ToolStripMenuItem trayStop;
-        bool busy,closing,consent,lastRunning,exitRequested,exitPending,trayNoticeShown,resourcesDisposed,engineFailure,startupHidden,advancedExpanded;
+        bool busy,closing,lastRunning,exitRequested,exitPending,trayNoticeShown,resourcesDisposed,engineFailure,startupHidden,advancedExpanded,resumeStartAfterElevation;
         string workState="Проверка";
         string activeOperation="none";bool exportingReport;
         StartupRegistrationState? startupState;
@@ -138,6 +140,8 @@ namespace LocalLink
         public MainForm(bool isPreview,bool darkPreview,bool lightPreview=false,EventWaitHandle windowRestoreSignal=null,bool savePreferences=true,bool startHidden=false,DiagnosticHistory diagnosticHistory=null)
         {
             preview=isPreview;forceDark=darkPreview;forceLight=lightPreview;persistPreferences=savePreferences;startInTray=!preview&&startHidden;restoreSignal=preview?null:windowRestoreSignal;
+            dependencies=new DependencyInstaller(DependencyInstaller.DefaultComponentsRoot);
+            engine=new Engine(preview||!persistPreferences?AppDomain.CurrentDomain.BaseDirectory:dependencies.ComponentsRoot);
             ownsHistory=diagnosticHistory==null;history=diagnosticHistory??DiagnosticHistory.CreateDefault(!preview&&persistPreferences);
             settings=preview||!persistPreferences?new AppSettings():AppSettings.Load();
             Text="LocalLink";Icon=applicationIcon;ClientSize=new Size(980,720);MinimumSize=new Size(820,620);StartPosition=FormStartPosition.CenterScreen;
@@ -169,7 +173,7 @@ namespace LocalLink
             advancedToggle.Click+=delegate{SetAdvancedSettings(!advancedExpanded);};
             showDetails.CheckedChanged+=delegate{RebuildVisibleRows();};
             elevate.Click+=delegate{Elevate();};find.Click+=delegate{Discover();};updateLists.Click+=async delegate{await UpdateListsAsync();};
-            telegramBridge.Click+=delegate{OpenTelegramBridge();};
+            telegramBridge.Click+=async delegate{await OpenTelegramBridgeAsync();};
             startupToggle.Click+=delegate{ChangeStartup(true);};startupRemove.Click+=delegate{ChangeStartup(false);};
             endpoints.SelectedIndexChanged+=delegate{var value=endpoints.SelectedItem as VpnConnection;if(value!=null){endpoint.Text=value.Address;port.Value=value.Port;}};
             results.SelectedIndexChanged+=delegate{detail.Text=results.SelectedItems.Count==0?"Выберите строку для подробностей.":results.SelectedItems[0].ToolTipText;};
@@ -186,6 +190,8 @@ namespace LocalLink
             if(!preview&&settings.RecoveredFromBackup)Write("Настройки восстановлены из резервного варианта. Повреждённый файл не удалялся.");
             SetAdvancedSettings(settings.Mode!=0);ApplyTheme();RefreshLists();RefreshControls();RefreshStartup();RefreshDiagnosticsNotice();
             RecordConfiguration();
+            if(!preview&&!startInTray&&persistPreferences)Shown+=async delegate
+            {if(await EnsureDependenciesAsync()&&resumeStartAfterElevation){resumeStartAfterElevation=false;await StartAsync();}};
         }
 
         protected override void SetVisibleCore(bool value)
@@ -387,7 +393,7 @@ namespace LocalLink
             custom.Enabled=quic.Enabled=voice.Enabled=telegram.Enabled=publicLists.Enabled=editable&&direct;
             endpoint.Enabled=port.Enabled=find.Enabled=endpoints.Enabled=editable&&!direct;
             elevate.Enabled=editable&&!Engine.IsAdmin();updateLists.Enabled=editable;
-            telegramBridge.Enabled=!preview&&!exitPending;
+            telegramBridge.Enabled=!preview&&!busy&&!exitPending;
             startupToggle.Enabled=!preview&&!busy&&!exitPending&&startupState.HasValue&&startupState.Value!=StartupRegistrationState.Enabled&&startupState.Value!=StartupRegistrationState.ForeignEntry;
             startupRemove.Enabled=!preview&&!busy&&!exitPending&&startupState.HasValue&&(startupState.Value==StartupRegistrationState.Enabled||startupState.Value==StartupRegistrationState.DifferentLocation);
             settingsNotice.Text=busy?"Параметры недоступны во время операции.":running?"Для изменения параметров выключите фильтр.":"Изменения применяются при включении фильтра.";
@@ -522,11 +528,63 @@ namespace LocalLink
                 }
             }
         }
-        bool Permit()
+        bool Permit(bool resumeStart=false)
         {
-            if(!Engine.IsAdmin()){Elevate();return false;}
-            if(consent)return true;
-            consent=MessageBox.Show(this,"Включить фильтр WinDivert? Соединения могут кратковременно прерваться.\r\nЗакрытие окна оставляет LocalLink в трее.","Включение фильтра",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)==DialogResult.Yes;return consent;
+            if(!Engine.IsAdmin()){Elevate(resumeStart);return false;}
+            return true;
+        }
+        async Task<bool> EnsureDependenciesAsync()
+        {
+            if(preview||busy||closing||exitPending)return false;
+            // Hidden fixtures never write components or contact download servers.
+            if(!persistPreferences)return true;
+            Begin("Подготовка");var token=operation.Token;
+            try
+            {
+                var current=await Task.Run(()=>dependencies.Inspect(true,token),token);
+                token.ThrowIfCancellationRequested();if(closing||IsDisposed)return false;
+                bool retry=false;
+                while(!current.Ready)
+                {
+                    using(var prompt=new SetupPrompt(theme,retry))
+                        if(prompt.ShowDialog(this)!=DialogResult.Yes){summary.Text="Установка отложена.";return false;}
+                    try
+                    {
+                        Record("components_install_started");workState="Установка";RefreshControls();
+                        await dependencies.InstallAsync(true,new Progress<DependencyProgress>(p=>
+                        {if(!closing&&!IsDisposed){summary.Text=p.Message+" "+p.Percent+"%";}}),token);
+                        token.ThrowIfCancellationRequested();current=await Task.Run(()=>dependencies.Inspect(true,token),token);
+                    }
+                    catch(OperationCanceledException){if(token.IsCancellationRequested)throw;retry=true;Record("components_download_failed");}
+                    catch(Exception error){RecordFailure("components",error);retry=true;}
+                    token.ThrowIfCancellationRequested();if(closing||IsDisposed)return false;
+                }
+                await Task.Run(()=>BootstrapPayload.Ensure(Path.Combine(dependencies.ComponentsRoot,"telegram")),token);
+                token.ThrowIfCancellationRequested();
+                summary.Text="Готово к подключению.";Record("components_ready");return true;
+            }
+            catch(OperationCanceledException){if(!closing&&!IsDisposed)summary.Text="Установка отменена.";return false;}
+            catch(Exception error){RecordFailure("components",error);if(!closing&&!IsDisposed)summary.Text="Не удалось подготовить компоненты. Нажмите «Включить», чтобы повторить.";return false;}
+            finally{End();}
+        }
+        async Task PrepareSelectedListAsync()
+        {
+            if(mode.SelectedIndex!=0||!publicLists.Checked)return;
+            try{if(!String.IsNullOrEmpty(PublicLists.GetActivePath(CancellationToken.None)))return;}
+            catch(IOException){}
+            Begin("Загрузка списка");
+            try
+            {
+                await PublicLists.UpdateAsync(new Progress<string>(Write),operation.Token);
+                operation.Token.ThrowIfCancellationRequested();RefreshLists();
+            }
+            catch(OperationCanceledException){throw;}
+            catch(Exception error)
+            {
+                RecordFailure("lists",error);
+                throw new IOException("Не удалось загрузить список. Нажмите «Включить», чтобы повторить.",error);
+            }
+            finally{End();}
         }
         void Begin(string title)
         {
@@ -560,7 +618,9 @@ namespace LocalLink
             try
             {
                 ResetEngineFailureForNewStart();
-                var spec=Spec();Profiles.Build(spec);Save();if(!Permit())return;
+                if(!await EnsureDependenciesAsync())return;
+                await PrepareSelectedListAsync();
+                var spec=Spec();Profiles.Build(spec);Save();if(!Permit(true))return;
                 engineFailure=false;Begin("Подготовка");summary.Text="Проверяем компоненты и список доменов…";
                 var token=operation.Token;
                 using(var prepared=await engine.PrepareStartAsync(spec,token))
@@ -632,8 +692,10 @@ namespace LocalLink
             if(busy||preview||mode.SelectedIndex!=0||!Selected().Contains("discord"))return;
             try
             {
+                if(!await EnsureDependenciesAsync())return;
+                await PrepareSelectedListAsync();
                 var spec=Spec();Profiles.Build(spec);Save();if(!Permit())return;
-                if(MessageBox.Show(this,"Подобрать только метод Discord?\r\nОбщий метод остальных сервисов сохранится. Фильтр будет перезапускаться, возможны краткие обрывы. Выйдите из голосового канала.\r\nДо 8 минут; проверяются только публичные API/обновление/CDN, без аккаунта и сообщений.","Отдельный подбор Discord",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;
+                if(MessageBox.Show(this,"Подобрать метод Discord? Это займёт несколько минут.","Подбор Discord",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
                 engine.Stop();ResetEngineFailureForNewStart();engineFailure=false;
                 lastTuning=null;Begin("Подбор Discord");ResetRows();var token=operation.Token;
                 Record("tuning_started","operation","discord_tune");
@@ -654,6 +716,8 @@ namespace LocalLink
             try
             {
                 ResetEngineFailureForNewStart();
+                if(!await EnsureDependenciesAsync())return;
+                await PrepareSelectedListAsync();
                 var spec=Spec();Profiles.Build(spec);var checkedServices=Selected().Where(id=>id!="telegram").ToList();
                 if(checkedServices.Count==0){summary.Text="Для подбора выберите сервис с HTTPS-проверкой, например Discord или YouTube.";return;}
                 Save();if(!Permit())return;engineFailure=false;lastTuning=null;Begin("Подбор метода");ResetRows();
@@ -702,15 +766,16 @@ namespace LocalLink
             try{endpoints.Items.Clear();foreach(var item in NetworkInfo.FindVpnConnections())endpoints.Items.Add(item);Write("TCP-кандидатов: "+endpoints.Items.Count+". Адрес и протокол нужно сверить вручную.");}
             catch(Exception error){RecordFailure("discover",error);Write("Не удалось получить кандидатов VPN.");}
         }
-        void Elevate()
+        void Elevate(bool resumeStart=false)
         {
             if(preview||Engine.IsAdmin()||busy||engine.IsRunning)return;
-            if(MessageBox.Show(this,"Windows запросит права администратора.\r\nНастройки сохранятся. После перезапуска нажмите «Включить» ещё раз — сам он не включится.","Права",MessageBoxButtons.OKCancel,MessageBoxIcon.Information)!=DialogResult.OK)return;
-            Record("elevation_requested");Save();try{using(Process child=Process.Start(new ProcessStartInfo(Application.ExecutablePath,"--elevated-restart"){UseShellExecute=true,Verb="runas"})){}exitRequested=true;Close();}
+            Record("elevation_requested");Save();try{using(Process child=Process.Start(new ProcessStartInfo(Application.ExecutablePath,resumeStart?"--elevated-start":"--elevated-restart"){UseShellExecute=true,Verb="runas"})){}exitRequested=true;Close();}
             catch(System.ComponentModel.Win32Exception error){RecordFailure("elevate",error);Record("elevation_cancelled");summary.Text="Повышение прав отменено.";}
         }
-        public void ShowElevatedRestartNotice()
+        public void ShowElevatedRestartNotice(bool resumeStart=false)
         {
+            resumeStartAfterElevation=resumeStart;
+            if(resumeStart){summary.Text="Подготовка подключения…";RefreshControls();return;}
             summary.Text="Окно перезапущено для запуска фильтра. Нажмите «Включить» ещё раз; автоматически он не включался.";
             Write(summary.Text);RefreshControls();
         }
@@ -741,21 +806,22 @@ namespace LocalLink
                 catch(System.ComponentModel.Win32Exception){Write("Окно свёрнуто в трей; уведомление Windows недоступно.");}
             }
         }
-        void OpenTelegramBridge()
+        async Task OpenTelegramBridgeAsync()
         {
-            if(preview||closing||exitPending)return;
+            if(preview||busy||closing||exitPending)return;
             Record("telegram_open_requested");
             try
             {
-                string folder=Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"telegram"));
+                if(!await EnsureDependenciesAsync())return;
+                string folder=Path.Combine(dependencies.ComponentsRoot,"telegram");
                 string executable=Path.Combine(folder,"LocalLink.Telegram.exe");
-                if(!File.Exists(executable))throw new FileNotFoundException("Модуль Telegram не включён в эту сборку. Нужна папка telegram из проверенного комплекта LocalLink.");
+                if(!File.Exists(executable))throw new FileNotFoundException("Не удалось подготовить Telegram. Повторите запуск.");
                 // Fixed adjacent resource only: no PATH search, URL, shell verb, or user-supplied arguments.
                 if((File.GetAttributes(folder)&FileAttributes.ReparsePoint)!=0||(File.GetAttributes(executable)&FileAttributes.ReparsePoint)!=0)
                     throw new IOException("Модуль Telegram должен находиться в папке сборки, а не по символической ссылке.");
                 using(Process child=Process.Start(new ProcessStartInfo(executable){UseShellExecute=false,WorkingDirectory=folder}))
                 {if(child==null)throw new IOException("Windows не подтвердила запуск модуля.");}
-                Write("Открыт модуль Telegram. Его запуск не подтверждает подключение Telegram.");
+                Write("Открыт модуль Telegram.");
                 Record("telegram_opened");
             }
             catch(Exception e)

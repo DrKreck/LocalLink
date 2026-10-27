@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "telegramArchive": {
+    "url": "https://github.com/DrKreck/LocalLink/releases/download/v0.8.2/LocalLink-0.8.2-telegram-runtime.zip",
+    "sha256": "b97dbed69cd00467debe2747fc2460504e59d32b5711e5edf94d10478e25eecd",
+    "size": 13586252
+  }
+}

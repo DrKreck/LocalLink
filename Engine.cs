@@ -160,7 +160,7 @@ namespace LocalLink
                     string path = Path.GetFullPath(Path.Combine(folder, relative.Replace('/', Path.DirectorySeparatorChar)));
                     if (!path.StartsWith(folder, StringComparison.OrdinalIgnoreCase))
                         throw new IOException("Некорректный путь в списке движка.");
-                    if (!File.Exists(path)) throw new IOException("Не установлен движок. Запустите tools\\Setup-Engine.ps1 из папки LocalLink.");
+                    if (!File.Exists(path)) throw new IOException("Нужны компоненты. Нажмите «Включить» для установки.");
                     var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read);guards.Add(stream);
                     string hash=PublicLists.HashStream(stream,token);
                     if (!String.Equals(hash, f.sha256, StringComparison.OrdinalIgnoreCase))
