@@ -77,9 +77,7 @@ internal sealed class TelegramBridgeWindow : Form
         var title = new Label { Text = "Telegram · локальный WebSocket-мост", AutoSize = true,
             Font = new Font("Segoe UI", 15F, FontStyle.Bold), Location = new Point(22, 20) };
         state.Text = "Запуск…"; state.SetBounds(24, 70, 530, 30);
-        details.Text = "Только Telegram. VPN, DNS и брандмауэр не меняются.\n" +
-            "Соединения модуля привязаны к физическому адаптеру.\n" +
-            "Без сторонних резервных серверов. Звонки не поддерживаются.";
+        details.Text = "Сообщения и файлы Telegram через локальный прокси.";
         details.SetBounds(24, 107, 530, 86);
         connect.Text = "Подключить Telegram"; connect.SetBounds(24, 209, 210, 37); connect.Enabled = false;
         restart.Text = "Перезапустить"; restart.SetBounds(246, 209, 145, 37);
@@ -115,8 +113,8 @@ internal sealed class TelegramBridgeWindow : Form
             string script = Path.Combine(root, "bridge.py");
             if (!File.Exists(runtime) || !File.Exists(script))
             {
-                state.Text = "Не установлен Python-модуль.";
-                details.Text = "Подготовьте runtime по инструкции telegram/README.md.\nОсновной фильтр LocalLink работает независимо.";
+                state.Text = "Нужно восстановить компоненты.";
+                details.Text = "Откройте LocalLink и снова нажмите «Открыть модуль Telegram».";
                 restart.Enabled = false;
                 return;
             }
