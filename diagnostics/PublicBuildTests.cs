@@ -19,7 +19,7 @@ internal static class PublicBuildTests
             Check(embeddedLauncher.Length > 1024 && embeddedLauncher[0] == 'M' && embeddedLauncher[1] == 'Z', "Telegram launcher embedded in the application.");
             foreach (var assembly in new[] { main, Assembly.Load(embeddedLauncher) })
             {
-                Check(assembly.GetName().Version == new Version(0, 8, 2, 0), "Unexpected executable version.");
+                Check(assembly.GetName().Version == new Version(0, 8, 3, 0), "Unexpected executable version.");
                 var names = assembly.GetTypes().Select(t => t.FullName).ToArray();
                 foreach (string forbidden in new[] { "LicenseGate", "LicensePolicy", "OfflineLicense", "Enrollment", "AdminHost", "OfflineAdmin" })
                     Check(!names.Any(n => n.IndexOf(forbidden, StringComparison.OrdinalIgnoreCase) >= 0), "Obsolete access-control code remains: " + forbidden);
@@ -37,7 +37,7 @@ internal static class PublicBuildTests
             foreach (string resource in new[] { "LocalLink.EngineManifest", "LocalLink.RuntimeManifest", "LocalLink.DependencyManifest", "LocalLink.TelegramScript", "LocalLink.TelegramConfig" })
                 Check(ReadResource(main, resource).Length > 0, "Required bootstrap resource: " + resource);
             string dependencies = System.Text.Encoding.UTF8.GetString(ReadResource(main, "LocalLink.DependencyManifest"));
-            Check(dependencies.Contains("/releases/download/v0.8.2/LocalLink-0.8.2-telegram-runtime.zip"), "Runtime download targets this release.");
+            Check(dependencies.Contains("/releases/download/v0.8.2/LocalLink-0.8.2-telegram-runtime.zip"), "Runtime download targets the pinned component release.");
             string runtime = System.Text.Encoding.UTF8.GetString(ReadResource(main, "LocalLink.RuntimeManifest"));
             Check(!runtime.Contains("__pycache__") && !runtime.Contains(".pyc\""), "Developer bytecode caches excluded from the runtime manifest.");
             CheckEmbeddedPreparation(main);

@@ -16,14 +16,17 @@ namespace LocalLink
         private static readonly string[] ExpectedStrategies =
             { "split", "sni-split", "disorder", "fake-split", "fake-disorder" };
         private static readonly string[] ProblemHosts =
-            { "discord.com", "gateway.discord.gg", "youtube.com", "www.youtube.com", "i.ytimg.com" };
+            { "discord.com", "gateway.discord.gg", "youtube.com", "www.youtube.com", "i.ytimg.com",
+                "discord-attachments-uploads-prd.storage.googleapis.com" };
         private static readonly string[] OutsideInlineScope =
         {
             "www.microsoft.com", "www.cloudflare.com", "store.steampowered.com",
             "steamcommunity.com", "reforger.armaplatform.com", "www.escapefromtarkov.com",
             "discord.com.evil.example", "gateway.discord.gg.evil.example", "notdiscord.com",
             "gatewaydiscord.gg", "discord.media.evil.example", "youtube.com.evil.example",
-            "notyoutube.com", "ytimg.com.evil.example", "cdn-ytimg.com", "evil.example"
+            "notyoutube.com", "ytimg.com.evil.example", "cdn-ytimg.com", "evil.example",
+            "googleapis.com", "storage.googleapis.com", "other-bucket.storage.googleapis.com",
+            "notdiscord-attachments-uploads-prd.storage.googleapis.com"
         };
         private const string ExternalList = @"C:\LocalLink\fixtures\not-opened-public-domains.lst";
         private const string VoiceUdpSelector = "--filter-udp=50000-50099,19294-19344";
@@ -52,7 +55,7 @@ namespace LocalLink
                 Check(!Profiles.IsTlsStrategy(invalid), "noncanonical strategy rejected");
 
             string domains = ServiceCatalog.DomainsFor(new[] { "discord", "youtube" }, "");
-            Check(Profiles.ValidateDomains(domains).Length == 11, "catalogue fixture contains only the eleven Discord/YouTube suffixes");
+            Check(Profiles.ValidateDomains(domains).Length == 12, "catalogue includes twelve Discord/YouTube and upload suffixes");
             foreach (string strategy in strategies)
             {
                 foreach (bool quic in new[] { false, true })
@@ -209,7 +212,7 @@ namespace LocalLink
             if (externalList) Has(profile, "--hostlist=" + ExternalList, label);
             Check(CountPrefix(profile, "--hostlist-exclude") == 0 && CountPrefix(profile, "--hostlist-auto") == 0,
                 "no hidden excludes/auto-learning: " + label);
-            Check(InlineHosts(profile).Length == 11, "main profile retains catalogue suffix count: " + label);
+            Check(InlineHosts(profile).Length == 12, "main profile retains catalogue suffix count: " + label);
         }
 
         private static string[] InlineHosts(List<string> profile)

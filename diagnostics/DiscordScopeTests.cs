@@ -16,14 +16,18 @@ namespace LocalLink
         static readonly int[] VoicePorts = { 2053, 2083, 2087, 2096, 8443 };
         static readonly string[] RequiredDiscordHosts = {
             "discord.com", "updates.discord.com", "gateway.discord.gg",
-            "cdn.discordapp.com", "media.discordapp.net", "voice.discord.media"
+            "cdn.discordapp.com", "media.discordapp.net", "voice.discord.media",
+            "discord-attachments-uploads-prd.storage.googleapis.com"
         };
         static readonly string[] OtherHosts = {
             "youtube.com", "www.youtube.com", "googlevideo.com", "i.ytimg.com",
             "instagram.com", "telegram.org", "store.steampowered.com",
             "www.microsoft.com", "www.cloudflare.com", "example.org",
             "discord.com.evil.example", "notdiscord.com", "gatewaydiscord.gg",
-            "discord.media.evil.example", "discordapp.com.attacker.example"
+            "discord.media.evil.example", "discordapp.com.attacker.example",
+            "storage.googleapis.com", "googleapis.com", "other-bucket.storage.googleapis.com",
+            "notdiscord-attachments-uploads-prd.storage.googleapis.com",
+            "discord-attachments-uploads-prd.storage.googleapis.com.evil.example"
         };
 
         static int Main(string[] args)
@@ -48,6 +52,7 @@ namespace LocalLink
                 {
                     var inherited = Spec(general, "", voice, quic, list);
                     var inheritedArguments = Profiles.Build(inherited);
+                    CheckInheritedUpload(inheritedArguments, general, quic);
                     Check(Equal(inheritedArguments, Profiles.Build(Spec(general, "", voice, quic, list))),
                         "empty override retains deterministic inherited arguments");
                     foreach (string discord in Profiles.TlsStrategies())
@@ -80,6 +85,23 @@ namespace LocalLink
                 Domains = ServiceCatalog.DomainsFor(new[] { "discord", "youtube" }, "example.org"),
                 Strategy = general, DiscordStrategy = discord, DiscordVoice = voice,
                 Quic = quic, HostListFile = list ? HostList : "" };
+        }
+
+        static void CheckInheritedUpload(List<string> arguments, string strategy, bool quic)
+        {
+            const string upload="discord-attachments-uploads-prd.storage.googleapis.com";
+            var profiles=Split(arguments);
+            foreach(string selector in new[]{"--filter-tcp=443","--filter-tcp=80"})
+                Check(FirstMatching(profiles,selector,upload)!=null,"upload host covered by inherited Discord method: "+strategy+"/"+selector);
+            if(quic)
+                Check(FirstMatching(profiles,"--filter-udp=443",upload)!=null,"upload QUIC host has the existing scoped profile: "+strategy);
+            string[] discord=Profiles.ValidateDomains(ServiceCatalog.DomainsFor(new[]{"discord"},""));
+            Check(Array.IndexOf(discord,upload)>=0,"upload is part of the canonical Discord catalogue");
+            foreach(string other in new[]{"googleapis.com","storage.googleapis.com","other-bucket.storage.googleapis.com",
+                "notdiscord-attachments-uploads-prd.storage.googleapis.com","discord-attachments-uploads-prd.storage.googleapis.com.evil.example"})
+                Check(!Matches(other,discord),"upload addition does not include other cloud hosts: "+other);
+            foreach(string service in new[]{"youtube","telegram","steam","arma","tarkov"})
+                Check(!Matches(upload,Profiles.ValidateDomains(ServiceCatalog.DomainsFor(new[]{service},""))),"upload host not added to "+service);
         }
 
         static void CheckDirect(string general, string discord, bool voice, bool quic,
