@@ -106,5 +106,5 @@ foreach ($case in $cases) {
 }
 $launcher = Start-Process -FilePath (Join-Path $telegram 'LocalLink.Telegram.exe') -ArgumentList '--self-test' -WindowStyle Hidden -Wait -PassThru
 if ($launcher.ExitCode -ne 0) { throw 'Telegram self-test failed.' }
-@{Version='0.8.2';Edition='OpenSource';ExecutableSHA256=(Get-FileHash -LiteralPath (Join-Path $out 'LocalLink.exe') -Algorithm SHA256).Hash;OfflineTestExecutables=$cases.Count} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'build-info.json') -Encoding UTF8
+@{Version='0.8.3';Edition='OpenSource';ExecutableSHA256=(Get-FileHash -LiteralPath (Join-Path $out 'LocalLink.exe') -Algorithm SHA256).Hash;OfflineTestExecutables=$cases.Count} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $out 'build-info.json') -Encoding UTF8
 Write-Host "Built: $out\LocalLink.exe"

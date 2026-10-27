@@ -13,7 +13,7 @@ $files = @(
     'README.md','LICENSE','THIRD-PARTY.md','CHANGELOG.md','CONTRIBUTING.md','SECURITY.md','.gitignore','.gitattributes',
     'tools\Setup-Engine.ps1','tools\Fetch-Engine.ps1','tools\Build-TelegramRuntime.ps1',
     'telegram_bridge\Launcher.cs','telegram_bridge\bridge.py','telegram_bridge\python312._pth','telegram_bridge\README.md',
-    'docs\PRIVACY.md','docs\RELEASE-0.8.1.md','docs\RELEASE-NOTES-0.8.1.md','docs\RELEASE-0.8.2.md','docs\RELEASE-NOTES-0.8.2.md','docs\images\interface.png','.github\FUNDING.yml'
+    'docs\PRIVACY.md','docs\RELEASE-0.8.1.md','docs\RELEASE-NOTES-0.8.1.md','docs\RELEASE-0.8.2.md','docs\RELEASE-NOTES-0.8.2.md','docs\RELEASE-NOTES-0.8.3.md','docs\images\interface.png','.github\FUNDING.yml'
 )
 $testNames = @('DiscordDesktopDiagnostics','DependencyInstallerTests','DependencyUiTests','TlsCoverageTests','TuningSelectionTests','TuningReportTests','ProfileEvidenceTests','StartupRegistrationTests','HostListPathTests','DiscordScopeTests','DiscordDesktopDiagnosticsTests','DiscordTuningTests','DiscordReportTests','VerifiedListCountTests','SettingsStorageTests','EnginePreflightTests','PublicListSaveTests','BugReportTests','ContactLinkTests','TypographyLayoutTests','UsabilityFlowTests','TrayLifecycleTests','ControlChromeTests','StartupTrayTests','UsabilityPreview','PublicBuildTests')
 $files += @($testNames | ForEach-Object { 'diagnostics\'+$_+'.cs' })

@@ -150,7 +150,7 @@ namespace LocalLink
             // from the UI setting or the override's method by accident.
             string discordStrategy="";var tls443=new List<List<string>>();
             foreach(var item in groups)if(item.Contains("--filter-tcp=443")&&item.Contains("--filter-l7=tls"))tls443.Add(item);
-            if(!endpoint&&tls443.Count==2&&tls443[0].Contains("--hostlist-domains=discord.com,discord.gg,discordapp.com,discordapp.net,discord.media"))
+            if(!endpoint&&tls443.Count==2&&tls443[0].Contains("--hostlist-domains="+Profiles.DiscordDomains))
             {
                 discordStrategy=InferStrategy(tls443[0],false);first=tls443[1];
             }

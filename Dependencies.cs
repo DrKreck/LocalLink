@@ -65,7 +65,7 @@ namespace LocalLink
         public string ComponentsRoot { get { return root; } }
         public static string DefaultComponentsRoot
         {
-            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalLink", "components", "0.8.2"); }
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalLink", "components", "0.8.3"); }
         }
         public DependencyInstaller(string componentsRoot) : this(componentsRoot, LoadPlan(), DownloadAsync) { }
         internal DependencyInstaller(string componentsRoot, InstallPlan installPlan,

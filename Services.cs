@@ -28,7 +28,7 @@ namespace LocalLink
             return new List<ServiceEntry>
             {
                 Entry("discord", "Discord", "Сайт и Gateway. Для голоса — ограниченный профиль discovery/STUN и TLS; звук проверяется в канале.",
-                    "discord.com", "discord.gg", "discordapp.com", "discordapp.net", "discord.media"),
+                    "discord.com", "discord.gg", "discordapp.com", "discordapp.net", "discord.media", "discord-attachments-uploads-prd.storage.googleapis.com"),
                 Entry("youtube", "YouTube", "Ответ сайта автоматически; воспроизведение видео вручную.",
                     "youtube.com", "youtu.be", "googlevideo.com", "ytimg.com", "youtubei.googleapis.com", "youtube-nocookie.com"),
                 Entry("telegram", "Telegram", "Web и TCP до публичных DC. Отдельный профиль приложения; сообщения и звонки вручную.",

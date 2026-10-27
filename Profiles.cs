@@ -35,7 +35,7 @@ namespace LocalLink
     // verification only; no strategy is a connectivity or IP-block guarantee.
     public static class Profiles
     {
-        internal const string DiscordDomains = "discord.com,discord.gg,discordapp.com,discordapp.net,discord.media";
+        internal const string DiscordDomains = "discord.com,discord.gg,discordapp.com,discordapp.net,discord.media,discord-attachments-uploads-prd.storage.googleapis.com";
         // Fresh copies prevent UI/test callers from mutating the shared order.
         // Mild real segmentation first; fake techniques remain opt-in trials.
         public static string[] TlsStrategies()

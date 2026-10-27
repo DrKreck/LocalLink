@@ -2,7 +2,7 @@
 
 Графический интерфейс **zapret2** для Windows.
 
-**[Скачать для Windows](https://github.com/DrKreck/LocalLink/releases/download/v0.8.2/LocalLink-0.8.2-windows-x64.zip)** · [Исходники](https://github.com/DrKreck/LocalLink/releases/download/v0.8.2/LocalLink-0.8.2-source.zip) · [Telegram](https://t.me/AresC404) · [Boosty](https://boosty.to/aresc404)
+**[Скачать для Windows](https://github.com/DrKreck/LocalLink/releases/download/v0.8.3/LocalLink-0.8.3-windows-x64.zip)** · [Исходники](https://github.com/DrKreck/LocalLink/releases/download/v0.8.3/LocalLink-0.8.3-source.zip) · [Telegram](https://t.me/AresC404) · [Boosty](https://boosty.to/aresc404)
 
 ![Интерфейс LocalLink](docs/images/interface.png)
 
