@@ -76,7 +76,7 @@ namespace LocalLink
             Directory.CreateDirectory(fixture);
             try
             {
-                MissingAndSuccess(); ReuseAndRepair(); CancellationAndRetry(); CorruptAndFailedDownloads(); ArchiveSafety(); ManifestSafety(); ConcurrentAndReparse();
+                MissingAndSuccess(); ReuseAndRepair(); CacheIdentity(); CrossVersionReuse(); ReuseSafety(); CancellationAndRetry(); CorruptAndFailedDownloads(); ArchiveSafety(); ManifestSafety(); ConcurrentAndReparse();
                 var embedded = new DependencyInstaller(Folder("embedded"));
                 Check(!embedded.Inspect(true).Ready, "Embedded manifests load without missing resource and identify empty fixture");
                 if (args.Length == 3 && args[0] == "--verify-local") VerifyRealArchive(args[1], args[2]);
@@ -93,7 +93,13 @@ namespace LocalLink
                 return 0;
             }
             catch (Exception ex) { Console.Error.WriteLine(ex); return 1; }
-            finally { try { Directory.Delete(fixture, true); } catch (IOException) { } catch (UnauthorizedAccessException) { } }
+            finally
+            {
+                string resolved = Path.GetFullPath(fixture);
+                string prefix = Path.GetFullPath(Path.GetTempPath()).TrimEnd('\\', '/') + Path.DirectorySeparatorChar + "LocalLink-dependency-tests-";
+                if (resolved.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    try { Directory.Delete(resolved, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
         }
         private static void VerifyRealArchive(string runtimeZip, string engineFolder)
         {
@@ -148,6 +154,101 @@ namespace LocalLink
             File.Delete(Path.Combine(root, "telegram", "runtime", "python.exe")); downloads = 0;
             Install(value, true, null, CancellationToken.None);
             Check(downloads == 1 && value.Inspect(true).Ready, "Missing runtime repaired from one archive");
+        }
+        private static void CacheIdentity()
+        {
+            byte[] zip = RuntimeZip(); var original = Plan(zip); var changed = Plan(zip);
+            string identity = DependencyInstaller.ContentFingerprint(original);
+            Check(identity.Length == 24 && identity.All(c => c >= '0' && c <= '9' || c >= 'a' && c <= 'f'), "Cache identity is a bounded hexadecimal content key");
+            changed.EngineFiles[0].Url = "https://raw.githubusercontent.com/DrKreck/LocalLink/new-release/winws2.exe";
+            changed.RuntimeUrl = "https://github.com/DrKreck/LocalLink/releases/download/v99.0.0/new-runtime.zip";
+            changed.RuntimeSha256 = Hash(Encoding.UTF8.GetBytes("different archive packaging")); changed.RuntimeSize++;
+            Array.Reverse(changed.EngineFiles); Array.Reverse(changed.RuntimeFiles);
+            Check(DependencyInstaller.ContentFingerprint(changed) == identity, "GUI release URLs, archive packaging and manifest ordering do not invalidate identical component bytes");
+            changed.EngineFiles[0].Sha256 = Hash(Encoding.UTF8.GetBytes("changed engine bytes"));
+            Check(DependencyInstaller.ContentFingerprint(changed) != identity, "Changed locked component content gets a separate cache identity");
+            changed = Plan(zip); changed.RuntimeFiles[0].Size++;
+            Check(DependencyInstaller.ContentFingerprint(changed) != identity, "Changed runtime component size changes identity");
+            changed = Plan(zip); changed.RuntimeFiles[0].Path = "other-python.exe";
+            Check(DependencyInstaller.ContentFingerprint(changed) != identity, "Changed component relative path changes identity");
+        }
+        private static void Reuse(DependencyInstaller value, bool telegram, IEnumerable<string> roots, CancellationToken token)
+        { value.ReuseInstalledAsync(telegram, roots, token).GetAwaiter().GetResult(); }
+        private static void CrossVersionReuse()
+        {
+            byte[] zip = RuntimeZip(); string legacy = Folder("legacy-version");
+            var installed = Installer(legacy, zip, null, null); Install(installed, true, null, CancellationToken.None);
+            var original = Directory.GetFiles(legacy, "*", SearchOption.AllDirectories).ToDictionary(p => p, p => Hash(File.ReadAllBytes(p)));
+            int downloads = 0; string fresh = Folder("content-cache");
+            var value = Installer(fresh, zip, delegate { downloads++; }, null);
+            Reuse(value, true, new[] { fresh, legacy, legacy }, CancellationToken.None);
+            Check(value.Inspect(true).Ready && downloads == 0, "New application cache imports verified older components without downloading");
+            Reuse(value, true, new[] { legacy }, CancellationToken.None); Install(value, true, null, CancellationToken.None);
+            Check(downloads == 0, "Repeated startup and install checks reuse ready cache with zero downloads");
+            Check(Directory.GetDirectories(fresh, ".install-*").Length == 0 && Directory.GetDirectories(fresh, "*.previous-*").Length == 0, "Ready cache checks make no staging or rollback revisions");
+            Check(original.All(p => File.Exists(p.Key) && Hash(File.ReadAllBytes(p.Key)) == p.Value), "Reuse leaves every legacy file byte-identical and does not remove it");
+
+            string partial = Folder("partial-old"); Directory.CreateDirectory(Path.Combine(partial, "engine"));
+            File.WriteAllBytes(Path.Combine(partial, "engine", "WinDivert.dll"), EngineTwo);
+            File.WriteAllText(Path.Combine(partial, "engine", "winws2.exe"), "corrupt old engine");
+            string repaired = Folder("partial-new"); downloads = 0; value = Installer(repaired, zip, delegate { downloads++; }, null);
+            Reuse(value, false, new[] { partial }, CancellationToken.None);
+            Check(!value.Inspect(false).Ready && File.ReadAllBytes(Path.Combine(repaired, "engine", "WinDivert.dll")).SequenceEqual(EngineTwo), "Valid individual legacy engine files are reused even when the older group is incomplete");
+            Check(!File.Exists(Path.Combine(repaired, "engine", "winws2.exe")), "Hash-mismatched legacy component is not copied");
+            Install(value, false, null, CancellationToken.None);
+            Check(downloads == 1 && value.Inspect(false).Ready, "Only the missing engine file is downloaded after partial reuse");
+            Check(File.ReadAllText(Path.Combine(partial, "engine", "winws2.exe")) == "corrupt old engine", "Legacy repair does not edit the older installation");
+
+            string complementary = Folder("complementary-new");
+            Directory.CreateDirectory(Path.Combine(complementary, "engine"));
+            File.WriteAllBytes(Path.Combine(complementary, "engine", "winws2.exe"), EngineOne);
+            downloads = 0; value = Installer(complementary, zip, delegate { downloads++; }, null);
+            Reuse(value, false, new[] { partial }, CancellationToken.None);
+            Check(value.Inspect(false).Ready && downloads == 0, "Migration preserves valid current files while importing complementary old files");
+            Check(!Directory.Exists(Path.Combine(complementary, "telegram")), "Engine-only reuse does not create a Telegram runtime");
+
+            string changedRoot = Folder("changed-plan-cache"); var changedPlan = Plan(zip);
+            byte[] changedEngine = Encoding.UTF8.GetBytes("changed expected engine bytes");
+            changedPlan.EngineFiles[0] = Locked("winws2.exe", changedEngine); downloads = 0;
+            value = new DependencyInstaller(changedRoot, changedPlan, delegate(Uri uri, string destination, long size, IProgress<DependencyProgress> progress, CancellationToken token)
+            {
+                token.ThrowIfCancellationRequested(); downloads++;
+                if (!uri.AbsolutePath.EndsWith("winws2.exe", StringComparison.Ordinal)) throw new Exception("Unchanged components must not be downloaded");
+                File.WriteAllBytes(destination, changedEngine); return Task.FromResult(0);
+            });
+            Reuse(value, true, new[] { legacy }, CancellationToken.None);
+            Check(!value.Inspect(true).EngineReady && value.Inspect(true).TelegramReady && downloads == 0, "Changed plan does not reuse mismatched engine but retains unchanged verified runtime without network");
+            Check(!File.Exists(Path.Combine(changedRoot, "engine", "winws2.exe")), "Changed expected hash cannot be bypassed by a familiar filename");
+            Install(value, true, null, CancellationToken.None);
+            Check(value.Inspect(true).Ready && downloads == 1, "Component update fetches only changed engine bytes, not unchanged engine files or runtime archive");
+        }
+        private static void ReuseSafety()
+        {
+            byte[] zip = RuntimeZip(); string legacy = Folder("safe-legacy");
+            Install(Installer(legacy, zip, null, null), true, null, CancellationToken.None);
+            string fresh = Folder("safe-fresh"); var value = Installer(fresh, zip, null, null);
+            using (var stop = new CancellationTokenSource())
+            {
+                stop.Cancel();
+                Throws<OperationCanceledException>(delegate { Reuse(value, true, new[] { legacy }, stop.Token); }, "Pre-cancelled reuse is rejected");
+            }
+            Check(Directory.GetFileSystemEntries(fresh).Length == 0, "Pre-cancelled reuse creates no installation files");
+            using (var occupied = new FileStream(Path.Combine(fresh, ".install.lock"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                Throws<IOException>(delegate { Reuse(value, true, new[] { legacy }, CancellationToken.None); }, "Reuse respects the installation lock");
+            Check(!Directory.Exists(Path.Combine(fresh, "engine")), "Locked reuse does not commit a component group");
+            string link = Path.Combine(fixture, "reuse-source-link");
+            if (CreateSymbolicLink(link, legacy, 3))
+            {
+                try
+                {
+                    Reuse(value, true, new[] { link }, CancellationToken.None);
+                    Check(!value.Inspect(true).Ready && !Directory.Exists(Path.Combine(fresh, "engine")), "Reparse-point candidate is ignored without copying from its target");
+                    var linked = Installer(link, zip, null, null);
+                    Throws<IOException>(delegate { Reuse(linked, true, new[] { legacy }, CancellationToken.None); }, "Reparse-point destination is rejected");
+                }
+                finally { Directory.Delete(link, false); }
+            }
+            else Console.WriteLine("SKIP optional reuse symbolic-link fixture: Windows did not grant link creation (" + Marshal.GetLastWin32Error() + ").");
         }
         private static void CancellationAndRetry()
         {

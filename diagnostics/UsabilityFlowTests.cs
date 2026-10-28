@@ -18,6 +18,7 @@ public static class UsabilityFlowTests
         Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
         CheckReportIntegration();
         CheckPrimaryCaptions();
+        CheckSettingsHeaderScaling();
         foreach (bool dark in new[] { false, true })
             foreach (bool minimum in new[] { false, true }) RunFixture(dark, minimum);
         Console.WriteLine("Usability flow: " + assertions + " assertions, " + fixtures + " preview fixtures, " + states + " settings view states, " + failures.Count + " failures.");
@@ -124,7 +125,7 @@ public static class UsabilityFlowTests
         var history=(DiagnosticHistory)Value(form,"history");
         Check(!history.PersistenceAvailable&&history.Snapshot().Events.Count==0,scope+": preview creates no diagnostic history");
         var snapshot=(BugReportSnapshot)typeof(MainForm).GetMethod("CaptureBugReport",Private).Invoke(form,null);
-        Check(snapshot.AppVersion=="0.8.3.0",scope+": report has current version");
+        Check(snapshot.AppVersion=="0.8.5.0",scope+": report has current version");
         Check(snapshot.Mode>=0&&snapshot.Mode<=2,scope+": report configuration is captured");
         Check(!snapshot.FilterRunning,scope+": report cannot start a filter");
         Check(Value(form,"tray")==null&&!((Engine)Value(form,"engine")).IsRunning,scope+": report capture has no live side effects");
@@ -176,8 +177,22 @@ public static class UsabilityFlowTests
         var main=shell.MainContent; var drawer=shell.SettingsContent;
         for(int cycle=0;cycle<3;cycle++)
         {
+            var header=(TableLayoutPanel)shell.SettingsAction.Parent;
+            float gearColumnWidth=header.ColumnStyles[2].Width;
+            Padding trayMargin=shell.TrayAction.Margin;
+            bool gearTabStop=shell.SettingsAction.TabStop;
             shell.SettingsAction.PerformClick(); Pump(form); states++;
             Check(shell.SettingsOpen && shell.SettingsContent.Visible,scope+": opens settings page "+cycle);
+            Check(!shell.SettingsAction.Visible&&!shell.SettingsAction.TabStop&&!shell.SettingsAction.CanFocus,scope+": header gear unavailable inside settings "+cycle);
+            Check(header.ColumnStyles[2].Width==0&&shell.TrayAction.Margin==Padding.Empty,scope+": header gear leaves no empty column or gap "+cycle);
+            int backCount=0;Control close=null;
+            foreach(Control control in Flatten(shell))
+            {
+                if(control.Visible&&control is Button&&control.Text=="\uE72B")backCount++;
+                if(control.Name=="CloseSettings")close=control;
+            }
+            Check(backCount==1,scope+": exactly one visible back action "+cycle);
+            Check(close!=null&&close.Visible&&close.ContainsFocus,scope+": single back action initially focused "+cycle);
             Check(!shell.MainContent.Enabled || !shell.MainContent.Visible,scope+": main unavailable while settings open "+cycle);
             Control page=NamedAncestor(shell.SettingsContent,"SettingsPage");
             Check(page!=null && page.Name=="SettingsPage",scope+": fullscreen settings container "+cycle);
@@ -190,9 +205,13 @@ public static class UsabilityFlowTests
             snapshot.CheckUnchanged(rows,scope+"/details-open"+cycle);
             details.Checked=false; Pump(form);
             snapshot.CheckOrder(rows,results,compact,scope+"/details-close"+cycle);
-            Check(SendShellKey(shell,Keys.Escape),scope+": Escape handled "+cycle);
+            if(cycle==0)Check(SendShellKey(shell,Keys.Escape),scope+": Escape handled "+cycle);
+            else if(cycle==1){Check(close is Button,scope+": back action is clickable");if(close is Button)((Button)close).PerformClick();}
+            else Check(SendShellKey(shell,Keys.Alt|Keys.Oemcomma),scope+": settings shortcut closes page "+cycle);
             Pump(form); states++;
             Check(!shell.SettingsOpen && shell.MainContent.Enabled,scope+": Escape returns to main "+cycle);
+            Check(shell.SettingsAction.Visible&&shell.SettingsAction.TabStop==gearTabStop&&shell.SettingsAction.Text=="\uE713",scope+": header gear restored "+cycle);
+            Check(header.ColumnStyles[2].Width==gearColumnWidth&&shell.TrayAction.Margin==trayMargin,scope+": scaled header geometry restored "+cycle);
             Check(shell.SettingsAction.ContainsFocus,scope+": focus restored "+cycle);
             snapshot.CheckUnchanged(rows,scope+"/settings-close"+cycle);
             CheckMainActions(form,scope+"/settings-close"+cycle); CheckQuiet(form,scope+"/drawer"+cycle);
@@ -210,6 +229,27 @@ public static class UsabilityFlowTests
         }
         shell.CloseSettings(); Pump(form);
         CheckMainActions(form,scope+"/after-keyboard");
+    }
+    static void CheckSettingsHeaderScaling()
+    {
+        foreach(float scale in new[]{1.25f,1.5f,2f})
+        using(var referenceForm=new Form{ClientSize=new Size(700,600),AutoScaleMode=AutoScaleMode.None,ShowInTaskbar=false,StartPosition=FormStartPosition.Manual,Location=new Point(-32000,-32000)})
+        using(var hiddenForm=new Form{ClientSize=new Size(700,600),AutoScaleMode=AutoScaleMode.None,ShowInTaskbar=false,StartPosition=FormStartPosition.Manual,Location=new Point(-32000,-32000)})
+        {
+            var reference=new AppShell();var hidden=new AppShell();
+            referenceForm.Controls.Add(reference);hiddenForm.Controls.Add(hidden);
+            referenceForm.Show();hiddenForm.Show();Application.DoEvents();
+            hidden.OpenSettings();Application.DoEvents();
+            referenceForm.Scale(new SizeF(scale,scale));hiddenForm.Scale(new SizeF(scale,scale));Application.DoEvents();
+            Check(!hidden.SettingsAction.Visible, "scaled open settings keeps header gear hidden at "+scale);
+            Check(((TableLayoutPanel)hidden.SettingsAction.Parent).ColumnStyles[2].Width==0, "scaled open settings keeps header column collapsed at "+scale);
+            hidden.CloseSettings();Application.DoEvents();
+            Check(((TableLayoutPanel)hidden.SettingsAction.Parent).ColumnStyles[2].Width==((TableLayoutPanel)reference.SettingsAction.Parent).ColumnStyles[2].Width,
+                "closing after scale restores current scaled column at "+scale);
+            Check(hidden.TrayAction.Margin==reference.TrayAction.Margin, "closing after scale restores current scaled tray spacing at "+scale);
+            Check(hidden.SettingsAction.Visible&&hidden.SettingsAction.TabStop, "closing after scale restores keyboard gear at "+scale);
+            referenceForm.Close();hiddenForm.Close();Application.DoEvents();
+        }
     }
     static void CheckAdvancedAndDraft(MainForm form,AppShell shell,string scope)
     {

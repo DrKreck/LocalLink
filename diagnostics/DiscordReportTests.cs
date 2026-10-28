@@ -112,7 +112,7 @@ internal static class DiscordReportTests
             Check(!TuningReport.ToJson(result).Contains(Secret),"untrusted scope rejected from projection");
             var full=new TuningResult{Scope="discord",Strategy="fake-disorder",BaselineProbes=probes};
             foreach(var probe in probes) {probe.Code="http-redirect-not-followed";probe.Passed=null;probe.Milliseconds=32000;}
-            foreach(string service in new[]{"control","discord","youtube","steam","arma","tarkov"})
+            foreach(string service in new[]{"control","discord","youtube","steam","arma","tarkov","dcs"})
                 full.BaselineServices.Add(new TuningServiceResult{ServiceId=service,Passed=512,Failed=512,Unknown=512});
             for(int i=0;i<12;i++)
                 full.Trials.Add(new TuningTrialResult{Strategy="fake-disorder",Stage="verification",Passed=512,Failed=512,Unknown=512,

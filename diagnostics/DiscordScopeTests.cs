@@ -100,7 +100,7 @@ namespace LocalLink
             foreach(string other in new[]{"googleapis.com","storage.googleapis.com","other-bucket.storage.googleapis.com",
                 "notdiscord-attachments-uploads-prd.storage.googleapis.com","discord-attachments-uploads-prd.storage.googleapis.com.evil.example"})
                 Check(!Matches(other,discord),"upload addition does not include other cloud hosts: "+other);
-            foreach(string service in new[]{"youtube","telegram","steam","arma","tarkov"})
+            foreach(string service in new[]{"youtube","telegram","steam","arma","tarkov","dcs"})
                 Check(!Matches(upload,Profiles.ValidateDomains(ServiceCatalog.DomainsFor(new[]{service},""))),"upload host not added to "+service);
         }
 

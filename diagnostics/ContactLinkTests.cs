@@ -8,7 +8,7 @@ using System.Security;
 using LocalLink;
 
 // Fixed-link semantics only. The injected launcher never opens a browser,
-// Telegram, a network connection, report file or any real application.
+// Telegram, a mail application, a network connection, report file or any real application.
 internal static class ContactLinkTests
 {
     static int assertions;
@@ -18,7 +18,7 @@ internal static class ContactLinkTests
     {
         try
         {
-            FixedAddress();LaunchContract();FailureContract();PublicApi();CallAudit();
+            FixedAddress();LaunchContract();FailureContract();EmailContract();PublicApi();CallAudit();
             Console.WriteLine("Contact link: "+assertions+" offline assertions passed. No real URL, browser, Telegram, file, network or filter action.");
             return 0;
         }
@@ -77,11 +77,43 @@ internal static class ContactLinkTests
         Check(systemLauncher!=null&&systemLauncher.ReturnType==typeof(bool),"system launcher exists but is not executed in tests");
         foreach(var method in typeof(ContactLink).GetMethods(BindingFlags.Public|BindingFlags.Static|BindingFlags.DeclaredOnly))
         {
-            Check(method.Name=="TryOpen"&&method.ReturnType==typeof(bool),"public API exposes only bool TryOpen overloads");
+            Check((method.Name=="TryOpen"||method.Name=="TryOpenEmail")&&method.ReturnType==typeof(bool),"public API exposes only fixed-destination bool launch overloads");
             foreach(var parameter in method.GetParameters())
                 Check(parameter.ParameterType==typeof(Action<string>)||(parameter.IsOut&&parameter.ParameterType==typeof(Exception).MakeByRefType()),
                     "public API accepts no arbitrary URL, file, report, process or filter object");
         }
+    }
+    static void EmailContract()
+    {
+        Check(ContactLink.Email=="kirill0063@gmail.com","exact supplied email address");
+        Check(ContactLink.EmailUrl=="mailto:"+ContactLink.Email,"email destination is mailto only");
+        foreach(string name in new[]{"Email","EmailUrl"})
+        {
+            var field=typeof(ContactLink).GetField(name,BindingFlags.Public|BindingFlags.Static);
+            Check(field!=null&&field.IsLiteral&&field.FieldType==typeof(string),"email destination is a fixed constant: "+name);
+        }
+        var uri=new Uri(ContactLink.EmailUrl,UriKind.Absolute);
+        Check(uri.Scheme==Uri.UriSchemeMailto&&uri.Query.Length==0&&uri.Fragment.Length==0,"email has no body, attachment or forwarding parameters");
+        int calls=0;string received=null;Exception error;
+        Check(ContactLink.TryOpenEmail(delegate(string address){calls++;received=address;},out error),"email launcher returns success");
+        Check(calls==1&&received==ContactLink.EmailUrl&&error==null,"email handler receives the fixed mailto once");
+        calls=0;
+        Check(ContactLink.TryOpenEmail(delegate(string address){calls++;received=address;})&&calls==1&&received==ContactLink.EmailUrl,"simple email overload keeps fixed mailto contract");
+        foreach(Exception failure in new Exception[]{new Win32Exception(1155,"NO_MAIL_CLIENT_SENTINEL"),
+            new InvalidOperationException("MAIL_HANDLER_SENTINEL"),new SecurityException("MAIL_HANDLER_SENTINEL"),
+            new NotSupportedException("MAIL_HANDLER_SENTINEL"),new IOException("MAIL_HANDLER_SENTINEL"),
+            new UnauthorizedAccessException("MAIL_HANDLER_SENTINEL"),new UriFormatException("MAIL_HANDLER_SENTINEL")})
+        {
+            calls=0;received=null;
+            bool opened=ContactLink.TryOpenEmail(delegate(string address){calls++;received=address;throw failure;},out error);
+            Check(!opened&&Object.ReferenceEquals(error,failure),"email failure remains available without escaping: "+failure.GetType().Name);
+            Check(calls==1&&received==ContactLink.EmailUrl,"email failure does not retry or change destination: "+failure.GetType().Name);
+            calls=0;
+            Check(!ContactLink.TryOpenEmail(delegate(string address){calls++;throw failure;})&&calls==1,"simple email failure is safe: "+failure.GetType().Name);
+        }
+        Check(!ContactLink.TryOpenEmail((Action<string>)null),"null email test handler cannot launch real mail client");
+        Check(!ContactLink.TryOpenEmail((Action<string>)null,out error)&&error==null,"error-aware null email handler stays non-launching");
+        Check(typeof(ContactLink).GetMethod("TryOpenEmail",Type.EmptyTypes)!=null,"system email launcher exists but is not executed in tests");
     }
     static Dictionary<short,OpCode> ReadCodes()
     {

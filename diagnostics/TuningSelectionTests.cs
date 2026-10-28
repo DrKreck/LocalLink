@@ -106,6 +106,26 @@ namespace LocalLink
             FakeRuntime vpn=new FakeRuntime();vpn.Vpn=true;
             result=Execute(vpn);
             Check(!result.Enabled&&vpn.CheckCount==0&&vpn.Starts.Count==0&&vpn.StopCount==0,"initial VPN hint never mutates engine");
+            Check(!result.VpnOverride,"VPN override defaults off");
+
+            FakeRuntime forcedVpn=new FakeRuntime(baseline,all,baseline,baseline,baseline,baseline,all);forcedVpn.Vpn=true;
+            result=Execute(forcedVpn,ignoreVpn:true);
+            Check(result.Enabled&&result.Verified&&result.VpnOverride&&forcedVpn.Starts.Count==6,"explicit override permits trials with stable VPN hints");
+            var forcedReport=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(TuningReport.ToJson(result));
+            Check((bool)forcedReport["VpnOverride"],"fixed override flag exported in tuning report");
+            forcedVpn.Stop();
+            int previousForcedChecks=forcedVpn.CheckCount,previousForcedStarts=forcedVpn.Starts.Count;
+            result=Execute(forcedVpn);
+            Check(!result.Enabled&&!result.VpnOverride&&!forcedVpn.IgnoreVpnHints&&forcedVpn.CheckCount==previousForcedChecks&&forcedVpn.Starts.Count==previousForcedStarts,"next run without explicit override blocks VPN again even with reused runtime");
+
+            FakeRuntime forcedRoute=new FakeRuntime(baseline,all);forcedRoute.Vpn=true;
+            forcedRoute.AfterCheck=delegate(int count){if(count==2)forcedRoute.Route="changed";};
+            result=Execute(forcedRoute,ignoreVpn:true);
+            Check(!result.Enabled&&result.VpnOverride&&!forcedRoute.IsRunning&&forcedRoute.Starts.Count==1&&forcedRoute.StopCount==1,"override still aborts and cleans up when route summary changes");
+
+            FakeRuntime forcedAccessible=new FakeRuntime(all);forcedAccessible.Vpn=true;
+            result=Execute(forcedAccessible,ignoreVpn:true);
+            Check(!result.Enabled&&result.VpnOverride&&forcedAccessible.CheckCount==1&&forcedAccessible.Starts.Count==0,"override does not fabricate failures when endpoints already reachable");
 
             FakeRuntime routeBaseline=new FakeRuntime(baseline);routeBaseline.AfterCheck=delegate(int count){routeBaseline.Route="changed";};
             result=Execute(routeBaseline);
@@ -178,8 +198,8 @@ namespace LocalLink
         }
         static async Task<List<CheckRow>> Wait(CancellationToken token)
         {await Task.Delay(60000,token);return new List<CheckRow>();}
-        static TuningResult Execute(FakeRuntime runtime,string original="split",CancellationToken token=default(CancellationToken))
-        {return Tuning.RunWithRuntimeAsync(runtime,original,Methods,null,token).GetAwaiter().GetResult();}
+        static TuningResult Execute(FakeRuntime runtime,string original="split",CancellationToken token=default(CancellationToken),bool ignoreVpn=false)
+        {return Tuning.RunWithRuntimeAsync(runtime,original,Methods,null,token,ignoreVpn:ignoreVpn).GetAwaiter().GetResult();}
         static List<CheckRow> Rows(bool? microsoft,bool? cloudflare,bool? discord,bool? youtube,bool? voice)
         {
             return new List<CheckRow>{Row("control.microsoft","control",microsoft),Row("control.cloudflare","control",cloudflare),

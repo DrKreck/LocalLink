@@ -14,6 +14,7 @@ internal static class SettingsStorageTests
     static readonly Encoding Utf8=new UTF8Encoding(false);
     static readonly MethodInfo LoadMethod=typeof(AppSettings).GetMethod("LoadFromPath",BindingFlags.NonPublic|BindingFlags.Static);
     static readonly MethodInfo SaveMethod=typeof(AppSettings).GetMethod("SaveToPath",BindingFlags.NonPublic|BindingFlags.Instance);
+    static readonly int MaximumSettingsBytes=(int)typeof(AppSettings).GetField("MaximumSettingsBytes",BindingFlags.NonPublic|BindingFlags.Static).GetRawConstantValue();
     [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]
     [return:MarshalAs(UnmanagedType.U1)]
     static extern bool CreateSymbolicLink(string link,string target,int flags);
@@ -101,17 +102,20 @@ internal static class SettingsStorageTests
             string boundPath=Path.Combine(fixture,"bounded.json");
             string valid="{\"Appearance\":\"dark\"}";
             File.WriteAllText(boundPath,valid+new string(' ',16384-Utf8.GetByteCount(valid)),Utf8);
-            Check(new FileInfo(boundPath).Length==16384&&Load(boundPath,null).Appearance=="dark","exact 16384-byte JSON is accepted");
-            File.WriteAllText(boundPath,valid+new string(' ',16385-Utf8.GetByteCount(valid)),Utf8);
-            Check(Load(boundPath,null).Appearance=="system","16385-byte primary is rejected");
-            File.WriteAllText(boundPath,"{\"Appearance\":\"dark\",\"Ignored\":\""+new string('\u0430',8300)+"\"}",Utf8);
-            Check(Load(boundPath,null).Appearance=="system","UTF-8 byte bound applies to multibyte JSON");
+            Check(new FileInfo(boundPath).Length==16384&&Load(boundPath,null).Appearance=="dark","legacy 16384-byte JSON remains accepted");
+            File.WriteAllText(boundPath,valid+new string(' ',MaximumSettingsBytes-Utf8.GetByteCount(valid)),Utf8);
+            Check(new FileInfo(boundPath).Length==MaximumSettingsBytes&&Load(boundPath,null).Appearance=="dark","exact configured byte-bound JSON is accepted");
+            File.WriteAllText(boundPath,valid+new string(' ',MaximumSettingsBytes+1-Utf8.GetByteCount(valid)),Utf8);
+            Check(new FileInfo(boundPath).Length==MaximumSettingsBytes+1&&Load(boundPath,null).Appearance=="system","primary one byte above configured bound is rejected");
+            string multibyte="{\"Appearance\":\"dark\",\"Ignored\":\""+new string('\u0430',MaximumSettingsBytes/2+1)+"\"}";
+            File.WriteAllText(boundPath,multibyte,Utf8);
+            Check(multibyte.Length<MaximumSettingsBytes&&new FileInfo(boundPath).Length>MaximumSettingsBytes&&Load(boundPath,null).Appearance=="system","UTF-8 byte bound, not character count, applies to multibyte JSON");
             File.WriteAllBytes(boundPath,new byte[]{0x7B,0x22,0xFF,0x22,0x3A,0x31,0x7D});
             Check(Load(boundPath,null).Appearance=="system","invalid UTF-8 is rejected");
             File.WriteAllText(boundPath,"null",Utf8);
             Check(Load(boundPath,null).Appearance=="system","null JSON cannot become trusted settings");
             bool sizeRejected=false;
-            try{Save(new AppSettings{Appearance="dark"},path,delegate(string stage){File.AppendAllText(stage,new string(' ',17000),Utf8);});}
+            try{Save(new AppSettings{Appearance="dark"},path,delegate(string stage){File.AppendAllText(stage,new string(' ',MaximumSettingsBytes+1),Utf8);});}
             catch(IOException){sizeRejected=true;}
             Check(sizeRejected&&File.ReadAllText(path,Utf8)==preserved,"oversized staged content is rejected before atomic commit");
 
@@ -130,11 +134,11 @@ internal static class SettingsStorageTests
             string[] equivalentBackups=Directory.GetFiles(fixture,"equivalent-json.json.backup-*");
             Check(equivalentBackups.Length==1&&File.ReadAllText(equivalentBackups[0],Utf8)==equivalent,"semantically equivalent but different bytes still make an atomic revision");
             string oversizedPath=Path.Combine(fixture,"oversized-primary.json");
-            string oversized=new string(' ',17000);
+            string oversized=new string(' ',MaximumSettingsBytes+1);
             File.WriteAllText(oversizedPath,oversized,Utf8);
             Save(new AppSettings{Appearance="light"},oversizedPath,null);
             string[] oversizedBackups=Directory.GetFiles(fixture,"oversized-primary.json.backup-*");
-            Check(Load(oversizedPath,null).Appearance=="light"&&oversizedBackups.Length==1&&new FileInfo(oversizedBackups[0]).Length==17000,"oversized existing primary is not read for dedup and is preserved during repair");
+            Check(Load(oversizedPath,null).Appearance=="light"&&oversizedBackups.Length==1&&new FileInfo(oversizedBackups[0]).Length==MaximumSettingsBytes+1,"oversized existing primary is not read for dedup and is preserved during repair");
             string bomPath=Path.Combine(fixture,"bom.json");
             File.WriteAllText(bomPath,"{\"Appearance\":\"dark\"}",new UTF8Encoding(true));
             Check(Load(bomPath,null).Appearance=="dark","UTF-8 BOM legacy files load safely");

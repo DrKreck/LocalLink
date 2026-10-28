@@ -117,6 +117,21 @@ namespace LocalLink
             Check(best.AcceptCount>=3,"readiness guard consulted for gain candidates and verification");
             best.Stop();
 
+            FakeRuntime blockedVpn=new FakeRuntime();blockedVpn.Vpn=true;
+            result=Execute(blockedVpn,"disorder");
+            Check(!result.Enabled&&!result.VpnOverride&&blockedVpn.Starts.Count==0&&blockedVpn.CheckCount==0,"Discord tuning blocks VPN hints by default");
+
+            FakeRuntime forcedVpn=new FakeRuntime(baseline,ready,baseline,baseline,baseline,baseline,ready);forcedVpn.Vpn=true;
+            result=Execute(forcedVpn,"disorder",ignoreVpn:true);
+            Check(result.Enabled&&result.Verified&&result.VpnOverride&&result.Scope=="discord","explicit override supports repeatable scoped Discord tuning");
+            Check(forcedVpn.ChecksWhileRunning.All(x=>x),"forced Discord baseline and probes retain controlled filter lifecycle");
+            forcedVpn.Stop();
+
+            FakeRuntime forcedRoute=new FakeRuntime(baseline,ready);forcedRoute.Vpn=true;
+            forcedRoute.AfterCheck=delegate(int count){if(count==2)forcedRoute.Route="changed";};
+            result=Execute(forcedRoute,"disorder",ignoreVpn:true);
+            Check(!result.Enabled&&result.VpnOverride&&!forcedRoute.IsRunning&&forcedRoute.StopCount==2,"forced Discord route change still stops baseline/trial filters");
+
             FakeRuntime onlyHello=new FakeRuntime(baseline,weak,weak,weak,weak,weak);
             result=Execute(onlyHello,"disorder");
             Check(!result.Enabled&&!result.Verified&&result.Strategy=="disorder"&&!onlyHello.IsRunning,"Gateway-only gains leave original choice and filter off");
@@ -236,8 +251,8 @@ namespace LocalLink
 
         static async Task<List<CheckRow>> Wait(CancellationToken token)
         {await Task.Delay(60000,token);return new List<CheckRow>();}
-        static TuningResult Execute(FakeRuntime runtime,string original,CancellationToken token=default(CancellationToken))
-        {return Tuning.RunWithRuntimeAsync(runtime,original,Methods,null,token).GetAwaiter().GetResult();}
+        static TuningResult Execute(FakeRuntime runtime,string original,CancellationToken token=default(CancellationToken),bool ignoreVpn=false)
+        {return Tuning.RunWithRuntimeAsync(runtime,original,Methods,null,token,ignoreVpn:ignoreVpn).GetAwaiter().GetResult();}
         static List<CheckRow> Rows(bool? api,bool? manifest,bool? updater,bool? cdnTls,bool? hello,bool? youtube)
         {
             var rows=new List<CheckRow>{Row("control.microsoft","control",true),Row("control.cloudflare","control",true),

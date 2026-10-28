@@ -19,7 +19,7 @@ internal static class PublicBuildTests
             Check(embeddedLauncher.Length > 1024 && embeddedLauncher[0] == 'M' && embeddedLauncher[1] == 'Z', "Telegram launcher embedded in the application.");
             foreach (var assembly in new[] { main, Assembly.Load(embeddedLauncher) })
             {
-                Check(assembly.GetName().Version == new Version(0, 8, 3, 0), "Unexpected executable version.");
+                Check(assembly.GetName().Version == new Version(0, 8, 5, 0), "Unexpected executable version.");
                 var names = assembly.GetTypes().Select(t => t.FullName).ToArray();
                 foreach (string forbidden in new[] { "LicenseGate", "LicensePolicy", "OfflineLicense", "Enrollment", "AdminHost", "OfflineAdmin" })
                     Check(!names.Any(n => n.IndexOf(forbidden, StringComparison.OrdinalIgnoreCase) >= 0), "Obsolete access-control code remains: " + forbidden);
@@ -55,8 +55,9 @@ internal static class PublicBuildTests
             File.WriteAllText(secret, "SYNTHETIC-STATE-NOT-A-SECRET");
             var ensure = assembly.GetType("LocalLink.BootstrapPayload", true).GetMethod("Ensure", BindingFlags.Public | BindingFlags.Static);
             Check(ensure != null, "Embedded Telegram preparation has a fixed local-folder API.");
-            ensure.Invoke(null, new object[] { fixture });
-            string[] files = { "LocalLink.Telegram.exe", "bridge.py", "LocalLink.Telegram.exe.config" };
+            string prepared=(string)ensure.Invoke(null, new object[] { fixture });
+            Check(prepared.StartsWith(fixture+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase),"Prepared launcher remains adjacent in the chosen folder");
+            string[] files = { Path.GetFileName(prepared), "bridge.py", Path.GetFileName(prepared)+".config" };
             string[] resources = { "LocalLink.TelegramLauncher", "LocalLink.TelegramScript", "LocalLink.TelegramConfig" };
             for (int i = 0; i < files.Length; i++)
                 Check(File.ReadAllBytes(Path.Combine(fixture, files[i])).SequenceEqual(ReadResource(assembly, resources[i])), "Prepared file matches embedded bytes: " + files[i]);
