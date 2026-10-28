@@ -23,6 +23,7 @@ namespace LocalLink
         public bool DiscordVoice;
         public bool TelegramNative;
         public string HostListFile = "";
+        public string HostListExcludeFile = "";
     }
 
     // Pure argument generation: no DNS lookup, file writes, engine execution or
@@ -47,7 +48,7 @@ namespace LocalLink
                 value == "fake-split" || value == "fake-disorder";
         }
 
-        private const int MaxDomainCount = 32;
+        private const int MaxDomainCount = 128;
         private const int MaxDomainTextLength = 8192;
         // Telegram's published networks, checked 2026-09-27. Not an all-IP bypass.
         internal const string TelegramNetworks = "91.108.56.0/22,91.108.4.0/22,91.108.8.0/22,91.108.16.0/22,91.108.12.0/22,149.154.160.0/20,91.105.192.0/23,91.108.20.0/22,185.76.151.0/24,2001:b28:f23d::/48,2001:b28:f23f::/48,2001:67c:4e8::/48,2001:b28:f23c::/48,2a0a:f280::/32";
@@ -67,7 +68,8 @@ namespace LocalLink
                 throw new ArgumentException("Separate Discord TLS methods are supported only in Direct mode.", "spec");
             if (spec.Mode != HelperMode.Direct && spec.Quic)
                 throw new ArgumentException("The QUIC option is available only in Direct mode.", "spec");
-            if (spec.Mode != HelperMode.Direct && (spec.DiscordVoice || spec.TelegramNative || !String.IsNullOrEmpty(spec.HostListFile)))
+            if (spec.Mode != HelperMode.Direct && (spec.DiscordVoice || spec.TelegramNative ||
+                !String.IsNullOrEmpty(spec.HostListFile) || !String.IsNullOrEmpty(spec.HostListExcludeFile)))
                 throw new ArgumentException("Native service and public-list profiles are available only in Direct mode.", "spec");
 
             List<string> args = new List<string>();
@@ -77,6 +79,7 @@ namespace LocalLink
             if (spec.Mode == HelperMode.Direct)
             {
                 string hostFile = ValidateHostListFile(spec.HostListFile);
+                string excludeFile = ValidateHostListFile(spec.HostListExcludeFile);
                 string domains = String.IsNullOrWhiteSpace(spec.Domains) && hostFile.Length > 0 ?
                     null : String.Join(",", ValidateDomains(spec.Domains));
                 string tcpPorts = spec.TelegramNative ? "80,443,5222" : "80,443";
@@ -94,14 +97,14 @@ namespace LocalLink
                     // The pinned engine uses FIRST matching profile. Never add
                     // the public list here: include lists are a UNION and would
                     // silently apply Discord's method to unrelated services.
-                    AddTlsProfile(args, 443, DiscordDomains, null, discordMethod, "");
+                    AddTlsProfile(args, 443, DiscordDomains, null, discordMethod, "", excludeFile);
                     args.Add("--new");
-                    AddHttpProfile(args, DiscordDomains, "", discordMethod);
+                    AddHttpProfile(args, DiscordDomains, "", discordMethod, excludeFile);
                     args.Add("--new");
                 }
-                AddTlsProfile(args, 443, domains, null, spec.Strategy, hostFile);
+                AddTlsProfile(args, 443, domains, null, spec.Strategy, hostFile, excludeFile);
                 args.Add("--new");
-                AddHttpProfile(args, domains, hostFile, spec.Strategy);
+                AddHttpProfile(args, domains, hostFile, spec.Strategy, excludeFile);
                 if (spec.Quic)
                 {
                     // QUIC Initial only, with the SAME host allowlist. There is
@@ -109,7 +112,7 @@ namespace LocalLink
                     args.Add("--new");
                     args.Add("--filter-udp=443");
                     args.Add("--filter-l7=quic");
-                    AddHosts(args, domains, hostFile);
+                    AddHosts(args, domains, hostFile, excludeFile);
                     args.Add("--in-range=x");
                     args.Add("--payload=quic_initial");
                     args.Add("--lua-desync=fake:blob=fake_default_quic:repeats=11");
@@ -124,7 +127,7 @@ namespace LocalLink
                     foreach (int voicePort in new[] { 2053, 2083, 2087, 2096, 8443 })
                     {
                         args.Add("--new");
-                        AddTlsProfile(args, voicePort, "discord.media", null, discordMethod, "");
+                        AddTlsProfile(args, voicePort, "discord.media", null, discordMethod, "", excludeFile);
                     }
                     args.Add("--new");
                     args.Add("--filter-udp=50000-50099,19294-19344");
@@ -184,11 +187,11 @@ namespace LocalLink
             return args;
         }
 
-        private static void AddTlsProfile(List<string> args, int port, string domains, string address, string strategy, string hostFile)
+        private static void AddTlsProfile(List<string> args, int port, string domains, string address, string strategy, string hostFile, string excludeFile = "")
         {
             args.Add("--filter-tcp=" + port.ToString(CultureInfo.InvariantCulture));
             args.Add("--filter-l7=tls");
-            AddHosts(args, domains, hostFile);
+            AddHosts(args, domains, hostFile, excludeFile);
             if (address != null) args.Add("--ipset-ip=" + address);
             args.Add("--in-range=x");
             args.Add("--out-range=-d10");
@@ -209,18 +212,21 @@ namespace LocalLink
                 "--lua-desync=multisplit:pos=1,midsld" : "--lua-desync=multisplit:pos=2");
         }
 
-        private static void AddHosts(List<string> args, string domains, string hostFile)
+        private static void AddHosts(List<string> args, string domains, string hostFile, string excludeFile = "")
         {
             if (domains != null) args.Add("--hostlist-domains=" + domains);
             // Pinned hostlist.c implements union of include lists, not intersection.
             if (hostFile.Length > 0) args.Add("--hostlist=" + hostFile);
+            // Pinned nfq2/nfqws.c exposes per-profile exclusions; hostlist.c
+            // checks them before includes and matches their subdomains too.
+            if (excludeFile.Length > 0) args.Add("--hostlist-exclude=" + excludeFile);
         }
 
-        private static void AddHttpProfile(List<string> args, string domains, string hostFile, string strategy)
+        private static void AddHttpProfile(List<string> args, string domains, string hostFile, string strategy, string excludeFile = "")
         {
             args.Add("--filter-tcp=80");
             args.Add("--filter-l7=http");
-            AddHosts(args, domains, hostFile);
+            AddHosts(args, domains, hostFile, excludeFile);
             args.Add("--in-range=x");
             args.Add("--out-range=-d10");
             args.Add("--payload=http_req");

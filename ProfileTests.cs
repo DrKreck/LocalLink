@@ -24,7 +24,7 @@ namespace LocalLink
                 new String('a', 8193) })
                 Reject(delegate { Profiles.ValidateDomains(bad); }, "domain rejected: " + Printable(bad));
             List<string> tooMany = new List<string>();
-            for (int i = 0; i < 33; i++) tooMany.Add("host" + i + ".example.org");
+            for (int i = 0; i < 129; i++) tooMany.Add("host" + i + ".example.org");
             Reject(delegate { Profiles.ValidateDomains(String.Join("\n", tooMany.ToArray())); }, "domain count bounded");
 
             // Exercise defaults without a service catalogue or explicit strategy.

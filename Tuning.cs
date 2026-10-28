@@ -30,6 +30,7 @@ namespace LocalLink
     public sealed class TuningResult
     {
         public bool Enabled,Verified,Cancelled,TimedOut;
+        public bool VpnOverride;
         public string Strategy,Summary;
         public string Scope="general";
         public int BaselinePassed,BaselineFailed,BaselineUnknown;
@@ -156,6 +157,7 @@ namespace LocalLink
         internal abstract class Runtime
         {
             internal string ExpectedRouteSummary;
+            internal bool IgnoreVpnHints;
             internal abstract bool IsRunning {get;}
             internal abstract bool HasLikelyVpn {get;}
             internal abstract string RouteSummary {get;}
@@ -185,16 +187,16 @@ namespace LocalLink
             internal override async Task StartAsync(string strategy,CancellationToken token)
             {
                 token.ThrowIfCancellationRequested();
-                if(HasLikelyVpn||RouteSummary!=ExpectedRouteSummary)throw new RouteChangedException();
+                CheckRoute(this,ExpectedRouteSummary,token);
                 // Only the TLS method changes; all user-selected scope and
                 // optional native profiles remain fixed throughout the run.
-                ProfileSpec trial=new ProfileSpec{Mode=HelperMode.Direct,Domains=spec.Domains,HostListFile=spec.HostListFile,
+                ProfileSpec trial=new ProfileSpec{Mode=HelperMode.Direct,Domains=spec.Domains,HostListFile=spec.HostListFile,HostListExcludeFile=spec.HostListExcludeFile,
                     Strategy=discordOnly?spec.Strategy:strategy,DiscordStrategy=discordOnly?strategy:spec.DiscordStrategy,
                     Quic=spec.Quic,DiscordVoice=spec.DiscordVoice,TelegramNative=spec.TelegramNative};
                 using(var prepared=await engine.PrepareStartAsync(trial,token))
                 {
                     token.ThrowIfCancellationRequested();
-                    if(HasLikelyVpn||RouteSummary!=ExpectedRouteSummary)throw new RouteChangedException();
+                    CheckRoute(this,ExpectedRouteSummary,token);
                     engine.StartPrepared(prepared);
                 }
             }
@@ -245,7 +247,7 @@ namespace LocalLink
         }
 
         public static Task<TuningResult> RunAsync(Engine engine,ProfileSpec spec,IEnumerable<string> ids,
-            IProgress<CheckRow> progress,Action<string> phase,CancellationToken token)
+            IProgress<CheckRow> progress,Action<string> phase,CancellationToken token,bool ignoreVpn=false)
         {
             if(engine==null||spec==null)throw new ArgumentNullException();
             if(spec.Mode!=HelperMode.Direct)throw new ArgumentException("Подбор доступен только в режиме сервисов.");
@@ -253,11 +255,11 @@ namespace LocalLink
             Profiles.Build(spec);
             List<string> selected=ServiceCatalog.Select(ids??new string[0]).Where(x=>x.Id!="telegram").Select(x=>x.Id).ToList();
             if(selected.Count==0)throw new ArgumentException("Выберите хотя бы один сервис HTTPS. Telegram не входит в TLS-подбор.");
-            return RunWithRuntimeAsync(new EngineRuntime(engine,spec,selected,progress),spec.Strategy,Profiles.TlsStrategies(),phase,token);
+            return RunWithRuntimeAsync(new EngineRuntime(engine,spec,selected,progress),spec.Strategy,Profiles.TlsStrategies(),phase,token,ignoreVpn:ignoreVpn);
         }
 
         public static Task<TuningResult> RunDiscordAsync(Engine engine,ProfileSpec spec,IEnumerable<string> ids,
-            IProgress<CheckRow> progress,Action<string> phase,CancellationToken token)
+            IProgress<CheckRow> progress,Action<string> phase,CancellationToken token,bool ignoreVpn=false)
         {
             if(engine==null||spec==null)throw new ArgumentNullException();
             if(spec.Mode!=HelperMode.Direct||engine.IsRunning)throw new InvalidOperationException("Остановите обработку перед отдельным подбором Discord.");
@@ -265,7 +267,7 @@ namespace LocalLink
             var selected=ServiceCatalog.Select(ids??new string[0]).Where(x=>x.Id!="telegram").Select(x=>x.Id).ToList();
             if(!selected.Contains("discord"))throw new ArgumentException("Выберите Discord для отдельного подбора.");
             string original=String.IsNullOrEmpty(spec.DiscordStrategy)?spec.Strategy:spec.DiscordStrategy;
-            return RunWithRuntimeAsync(new EngineRuntime(engine,spec,selected,progress,true),original,Profiles.TlsStrategies(),phase,token);
+            return RunWithRuntimeAsync(new EngineRuntime(engine,spec,selected,progress,true),original,Profiles.TlsStrategies(),phase,token,ignoreVpn:ignoreVpn);
         }
 
         // Public bootstrap, not authenticated Desktop use. Do not select a
@@ -296,7 +298,7 @@ namespace LocalLink
 
         internal static async Task<TuningResult> RunWithRuntimeAsync(Runtime runtime,string originalStrategy,
             IEnumerable<string> strategies,Action<string> phase,CancellationToken token,
-            int totalTimeoutMilliseconds=TotalTimeoutMilliseconds,int matrixTimeoutMilliseconds=MatrixTimeoutMilliseconds)
+            int totalTimeoutMilliseconds=TotalTimeoutMilliseconds,int matrixTimeoutMilliseconds=MatrixTimeoutMilliseconds,bool ignoreVpn=false)
         {
             if(runtime==null)throw new ArgumentNullException("runtime");
             if(totalTimeoutMilliseconds<1||totalTimeoutMilliseconds>TotalTimeoutMilliseconds||matrixTimeoutMilliseconds<1||matrixTimeoutMilliseconds>MatrixTimeoutMilliseconds)
@@ -304,6 +306,8 @@ namespace LocalLink
             List<string> methods=ValidateStrategies(strategies);
             TuningResult result=Outcome(originalStrategy,String.Empty);
             result.Scope=runtime.Scope;
+            result.VpnOverride=ignoreVpn;
+            runtime.IgnoreVpnHints=ignoreVpn;
             bool keep=false,started=false;
             using(CancellationTokenSource deadline=CancellationTokenSource.CreateLinkedTokenSource(token))
             {
@@ -313,7 +317,8 @@ namespace LocalLink
                 {
                     runToken.ThrowIfCancellationRequested();
                     if(runtime.IsRunning)throw new InvalidOperationException("Перед подбором остановите обработку.");
-                    if(runtime.HasLikelyVpn){result.Summary=BaselineOutcome(null,true,originalStrategy).Summary;return result;}
+                    if(!runtime.IgnoreVpnHints&&runtime.HasLikelyVpn){result.Summary=BaselineOutcome(null,true,originalStrategy).Summary;return result;}
+                    if(runtime.IgnoreVpnHints)Emit(phase,"Проверка VPN пропущена для этого подбора");
                     string route=runtime.RouteSummary;
                     runtime.ExpectedRouteSummary=route;
                     if(runtime.BaselineUsesFilter)
@@ -515,7 +520,7 @@ namespace LocalLink
         static void AddServiceCount(SortedDictionary<string,TuningServiceResult> services,string id,bool? passed)
         {
             // Never copy an arbitrary row/service label into exported metadata.
-            if(id!="control"&&id!="discord"&&id!="youtube"&&id!="steam"&&id!="arma"&&id!="tarkov")return;
+            if(id!="control"&&id!="discord"&&id!="youtube"&&id!="steam"&&id!="arma"&&id!="tarkov"&&id!="dcs")return;
             TuningServiceResult service;
             if(!services.TryGetValue(id,out service))
             {service=new TuningServiceResult{ServiceId=id};services.Add(id,service);}
@@ -525,7 +530,7 @@ namespace LocalLink
         }
         static TuningResult Outcome(string strategy,string summary){return new TuningResult{Enabled=false,Strategy=strategy,Summary=summary};}
         static void CheckRoute(Runtime runtime,string route,CancellationToken token)
-        {token.ThrowIfCancellationRequested();if(runtime.HasLikelyVpn||route!=runtime.RouteSummary)throw new RouteChangedException();}
+        {token.ThrowIfCancellationRequested();if((!runtime.IgnoreVpnHints&&runtime.HasLikelyVpn)||route!=runtime.RouteSummary)throw new RouteChangedException();}
         static void CheckRunning(Runtime runtime)
         {if(!runtime.IsRunning)throw new InvalidOperationException("Движок завершился во время подбора. Фильтр не оставлен включённым.");}
         static void Emit(Action<string> phase,string text){if(phase!=null)phase(text);}

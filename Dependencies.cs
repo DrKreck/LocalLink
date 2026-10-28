@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
@@ -65,7 +66,20 @@ namespace LocalLink
         public string ComponentsRoot { get { return root; } }
         public static string DefaultComponentsRoot
         {
-            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalLink", "components", "0.8.3"); }
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalLink", "components", "cache-v1", ContentFingerprint(LoadPlan())); }
+        }
+        // Component identity is independent of the GUI version and mirror URL.
+        // Every reused byte is still checked against its full manifest hash.
+        internal static string ContentFingerprint(InstallPlan value)
+        {
+            ValidatePlan(value);
+            var rows = new List<string>();
+            foreach (var group in new[] { Tuple.Create("engine/", value.EngineFiles), Tuple.Create("runtime/", value.RuntimeFiles) })
+                foreach (var file in group.Item2)
+                    rows.Add(group.Item1 + file.Path.ToLowerInvariant() + "\0" + file.Size.ToString(CultureInfo.InvariantCulture) + "\0" + file.Sha256.ToLowerInvariant());
+            rows.Sort(StringComparer.Ordinal);
+            using (var hash = SHA256.Create())
+                return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes("LocalLink-components-v1\n" + String.Join("\n", rows)))).Replace("-", "").ToLowerInvariant().Substring(0, 24);
         }
         public DependencyInstaller(string componentsRoot) : this(componentsRoot, LoadPlan(), DownloadAsync) { }
         internal DependencyInstaller(string componentsRoot, InstallPlan installPlan,
@@ -96,6 +110,129 @@ namespace LocalLink
         public Task InstallAsync(bool includeTelegram, IProgress<DependencyProgress> progress, CancellationToken token)
         {
             return Task.Run(async delegate { await InstallCore(includeTelegram, progress, token).ConfigureAwait(false); }, token);
+        }
+
+        public Task ReuseInstalledAsync(bool includeTelegram, CancellationToken token)
+        { token.ThrowIfCancellationRequested(); return ReuseInstalledAsync(includeTelegram, DefaultReuseRoots(), token); }
+
+        internal Task ReuseInstalledAsync(bool includeTelegram, IEnumerable<string> candidates, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            var roots = new List<string>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (candidates != null)
+                foreach (string candidate in candidates)
+                {
+                    if (roots.Count >= 40) break;
+                    if (String.IsNullOrWhiteSpace(candidate)) continue;
+                    string full = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    if (!String.Equals(full, root, StringComparison.OrdinalIgnoreCase) && seen.Add(full)) roots.Add(full);
+                }
+            return Task.Run(delegate { ReuseCore(includeTelegram, roots, token); }, token);
+        }
+
+        private IEnumerable<string> DefaultReuseRoots()
+        {
+            string components = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalLink", "components");
+            foreach (string version in new[] { "0.8.3", "0.8.2", "0.8.4" }) yield return Path.Combine(components, version);
+            yield return AppDomain.CurrentDomain.BaseDirectory;
+            string cache = Path.Combine(components, "cache-v1");
+            // Bounded discovery of earlier manifest caches, never arbitrary drives.
+            var previous = new List<string>();
+            try
+            {
+                CheckNoReparse(cache);
+                if (Directory.Exists(cache))
+                {
+                    int examined = 0;
+                    foreach (string directory in Directory.EnumerateDirectories(cache))
+                    {
+                        if (++examined > 64) break;
+                        string name = Path.GetFileName(directory);
+                        if (name.Length != 24) continue;
+                        bool hex = true;
+                        foreach (char c in name) if (!(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f')) { hex = false; break; }
+                        if (hex) previous.Add(directory);
+                    }
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            previous.Sort(StringComparer.Ordinal);
+            foreach (string directory in previous) yield return directory;
+        }
+
+        private void ReuseCore(bool includeTelegram, IList<string> candidates, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            if (Inspect(includeTelegram, token).Ready) return;
+            CheckNoReparse(root); Directory.CreateDirectory(root); CheckNoReparse(root);
+            FileStream installationLock;
+            try { installationLock = new FileStream(SafePath(root, ".install.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException ex) { throw new IOException("Подготовка компонентов уже выполняется.", ex); }
+            using (installationLock)
+            {
+                if (Inspect(includeTelegram, token).Ready) return;
+                string stage = Path.Combine(root, ".install-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(stage); CheckNoReparse(stage);
+                try
+                {
+                    ReuseGroup("engine", plan.EngineFiles, candidates, stage, token);
+                    if (includeTelegram) ReuseGroup("telegram/runtime", plan.RuntimeFiles, candidates, stage, token);
+                }
+                finally { CleanStage(stage); }
+            }
+        }
+
+        private void ReuseGroup(string relative, LockedFile[] files, IList<string> candidates, string stage, CancellationToken token)
+        {
+            string destination = SafePath(root, relative);
+            if (VerifyFolder(destination, files, token)) return;
+            string staged = SafePath(stage, relative);
+            Directory.CreateDirectory(staged); CheckNoReparse(staged);
+            int imported = 0;
+            foreach (LockedFile file in files)
+            {
+                token.ThrowIfCancellationRequested();
+                string target = SafePath(staged, file.Path);
+                if (TryCopyVerified(SafePath(destination, file.Path), target, file, token)) continue;
+                foreach (string candidate in candidates)
+                {
+                    if (TryCopyVerified(SafePath(SafePath(candidate, relative), file.Path), target, file, token))
+                    { imported++; break; }
+                }
+            }
+            // Preserve valid parts too: InstallCore then fetches only missing
+            // engine files, or one runtime archive if that module is incomplete.
+            if (imported == 0) return;
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)); CheckNoReparse(destination);
+            CommitFolder(staged, destination, token);
+        }
+
+        private static bool TryCopyVerified(string source, string target, LockedFile file, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            bool created = false;
+            try
+            {
+                CheckNoReparse(source);
+                if (!File.Exists(source)) return false;
+                using (var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    if (!VerifyStream(input, file, token)) return false;
+                    input.Position = 0;
+                    CheckNoReparse(target); Directory.CreateDirectory(Path.GetDirectoryName(target)); CheckNoReparse(target);
+                    using (var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                    { created = true; CopyBounded(input, output, file.Size, token); output.Flush(true); }
+                    if (!VerifyFile(target, file, token)) throw new IOException("Скопированный компонент не прошёл проверку.");
+                    return true;
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            // Only a newly created file in our owned stage is removable.
+            if (created) { CheckNoReparse(target); File.Delete(target); }
+            return false;
         }
 
         private async Task InstallCore(bool includeTelegram, IProgress<DependencyProgress> progress, CancellationToken token)
@@ -302,6 +439,11 @@ namespace LocalLink
             token.ThrowIfCancellationRequested(); CheckNoReparse(path);
             if (!File.Exists(path)) return false;
             using (var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                return VerifyStream(input, entry, token);
+        }
+        private static bool VerifyStream(FileStream input, LockedFile entry, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
             {
                 if (input.Length != entry.Size) return false;
                 using (var hash = SHA256.Create())

@@ -181,7 +181,7 @@ namespace LocalLink
             if(spec==null)throw new ArgumentNullException("spec");
             var snapshot=new ProfileSpec{Mode=spec.Mode,Domains=spec.Domains,Endpoint=spec.Endpoint,Port=spec.Port,
                 Strategy=spec.Strategy,DiscordStrategy=spec.DiscordStrategy,Quic=spec.Quic,DiscordVoice=spec.DiscordVoice,
-                TelegramNative=spec.TelegramNative,HostListFile=spec.HostListFile};
+                TelegramNative=spec.TelegramNative,HostListFile=spec.HostListFile,HostListExcludeFile=spec.HostListExcludeFile};
             var args=Profiles.Build(snapshot);
             return Task.Run(()=>PrepareCore(snapshot,args,epoch,token),token);
         }
@@ -193,6 +193,13 @@ namespace LocalLink
                 token.ThrowIfCancellationRequested();guards=VerifyComponentFiles(token);
                 int verifiedDomains=0;
                 if(!String.IsNullOrEmpty(spec.HostListFile))list=PublicLists.OpenVerified(spec.HostListFile,token,out verifiedDomains);
+                // Retain the independently verified exclusion snapshot with the
+                // component guards through preflight, launch and engine stop.
+                if(!String.IsNullOrEmpty(spec.HostListExcludeFile))
+                {
+                    int verifiedExclusions;
+                    guards.Add(PublicLists.OpenVerified(spec.HostListExcludeFile,token,out verifiedExclusions));
+                }
                 token.ThrowIfCancellationRequested();
                 if(Interlocked.CompareExchange(ref disposed,0,0)!=0)throw new ObjectDisposedException("Engine");
                 int? externalDomains=list==null?(int?)null:verifiedDomains;

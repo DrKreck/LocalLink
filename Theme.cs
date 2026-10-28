@@ -818,6 +818,10 @@ namespace LocalLink
         readonly Panel settingsPage = new Panel();
         readonly Button settingsAction = new ThemedButton(), trayAction = new ThemedButton(), closeAction = new ThemedButton();
         readonly ComboBox appearance = new ThemedComboBox();
+        readonly ColumnStyle settingsColumn = new ColumnStyle(SizeType.Absolute, 52);
+        float hiddenSettingsColumnWidth;
+        Padding hiddenTrayMargin;
+        bool settingsTabStop;
         bool settingsOpen, mainWasEnabled, layingOut;
         public Panel MainContent { get { return mainContent; } }
         public Panel SettingsContent { get { return settingsContent; } }
@@ -843,7 +847,7 @@ namespace LocalLink
             };
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52));
+            header.ColumnStyles.Add(settingsColumn);
             header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             header.Controls.Add(new Label {
                 Text = "LocalLink", Dock = DockStyle.Fill, Margin = Padding.Empty,
@@ -936,10 +940,14 @@ namespace LocalLink
         {
             if (settingsOpen || IsDisposed) return;
             mainWasEnabled = mainContent.Enabled;
+            hiddenSettingsColumnWidth = settingsColumn.Width;
+            hiddenTrayMargin = trayAction.Margin;
+            settingsTabStop = settingsAction.TabStop;
             settingsOpen = true;
             mainContent.Visible = false; mainContent.Enabled = false;
             LayoutSettings(); settingsPage.Visible = true; settingsPage.BringToFront();
-            settingsAction.Text = "\uE72B"; settingsAction.AccessibleName = "Назад";
+            settingsAction.TabStop = false; settingsAction.Visible = false;
+            settingsColumn.Width = 0; trayAction.Margin = Padding.Empty;
             closeAction.Select(); closeAction.Focus();
             OnSettingsOpenChanged();
         }
@@ -950,8 +958,25 @@ namespace LocalLink
             settingsOpen = false; settingsPage.Visible = false;
             mainContent.Enabled = mainWasEnabled; mainContent.Visible = true;
             settingsAction.Text = "\uE713"; settingsAction.AccessibleName = "Открыть настройки";
+            settingsColumn.Width = hiddenSettingsColumnWidth; trayAction.Margin = hiddenTrayMargin;
+            settingsAction.TabStop = settingsTabStop; settingsAction.Visible = true;
             if (settingsAction.CanFocus) { settingsAction.Select(); settingsAction.Focus(); }
             OnSettingsOpenChanged();
+        }
+        protected override void ScaleControl(SizeF factor, BoundsSpecified specified)
+        {
+            // Hidden absolute columns do not scale themselves while collapsed.
+            // Retain their geometry across a DPI change with settings open.
+            if(settingsOpen)
+            {
+                hiddenSettingsColumnWidth *= factor.Width;
+                hiddenTrayMargin = new Padding(
+                    (int)Math.Round(hiddenTrayMargin.Left * factor.Width),
+                    (int)Math.Round(hiddenTrayMargin.Top * factor.Height),
+                    (int)Math.Round(hiddenTrayMargin.Right * factor.Width),
+                    (int)Math.Round(hiddenTrayMargin.Bottom * factor.Height));
+            }
+            base.ScaleControl(factor, specified);
         }
         public void ToggleSettings() { if (settingsOpen) CloseSettings(); else OpenSettings(); }
         void OnSettingsOpenChanged()

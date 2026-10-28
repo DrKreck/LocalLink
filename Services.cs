@@ -38,7 +38,9 @@ namespace LocalLink
                 Entry("arma", "Arma Reforger", "Только официальный сайт; список серверов и подключение к игре вручную.",
                     "reforger.armaplatform.com", "bohemia.net"),
                 Entry("tarkov", "Tarkov", "Только официальный сайт; вход, матчмейкинг и рейд вручную.",
-                    "escapefromtarkov.com", "battlestategames.com")
+                    "escapefromtarkov.com", "battlestategames.com"),
+                Entry("dcs", "DCS World", "Сайты Eagle Dynamics. Подключение к игровому серверу TCP/UDP проверяется отдельно.",
+                    "digitalcombatsimulator.com", "eagle.ru")
             };
         }
 
@@ -243,6 +245,9 @@ namespace LocalLink
                 case "tarkov":
                     rows.Add(Manual(serviceId, "game", "Tarkov — вход и рейд", "Проверьте вход через лаунчер, матчмейкинг и подключение к рейду. Сайт не подтверждает игровой backend; токены, файлы клиента и конфигурация не читаются."));
                     break;
+                case "dcs":
+                    rows.Add(Manual(serviceId,"game","DCS World — игровой сервер","Подключитесь к нужному серверу в игре. Ответ сайта не проверяет TCP/UDP игровой сессии."));
+                    break;
                 default: throw new ArgumentException("Неизвестный сервис.", "serviceId");
             }
             return rows;
@@ -265,6 +270,7 @@ namespace LocalLink
                     case "steam": host = "store.steampowered.com"; break;
                     case "arma": host = "reforger.armaplatform.com"; break;
                     case "tarkov": host = "www.escapefromtarkov.com"; break;
+                    case "dcs": host = "www.digitalcombatsimulator.com"; break;
                     default: throw new ArgumentException("Неизвестный сервис.");
                 }
                 await AddHttpsAsync(entry, "web", entry.Name + " (только сайт)", host, rows, progress, token).ConfigureAwait(false);

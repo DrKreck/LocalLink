@@ -10,10 +10,10 @@ namespace LocalLink
     // Only this application's preferences. Never loads VPN profiles or browser data.
     public sealed class AppSettings
     {
-        internal const int MaximumSettingsBytes = 16384;
+        internal const int MaximumSettingsBytes = 1024 * 1024;
         const int MaximumRecoveryCandidates = 32;
         static readonly UTF8Encoding SettingsEncoding = new UTF8Encoding(false, true);
-        public List<string> Services = new List<string> { "discord", "youtube", "telegram", "steam", "arma", "tarkov" };
+        public List<string> Services = new List<string> { "discord", "youtube", "telegram", "steam", "arma", "tarkov", "dcs" };
         public int Mode;
         public string Strategy = "split";
         public string DiscordStrategy = "";
@@ -21,10 +21,13 @@ namespace LocalLink
         public bool DiscordVoice = true;
         public bool TelegramNative = true;
         public bool UsePublicLists;
+        public bool UseCustomDomains = true;
+        public List<string> DisabledDomains = new List<string>();
         public string CustomDomains = "";
         public string Endpoint = "";
         public int Port = 443;
         public string Appearance = "system";
+        public string SelectedPresetId = "";
         [ScriptIgnore]
         public bool RecoveredFromBackup { get; private set; }
 
@@ -37,6 +40,9 @@ namespace LocalLink
             foreach(var id in value.Services??new List<string>())
                 if(id!=null&&valid.Contains(id)&&!selected.Contains(id))selected.Add(id);
             value.Services=selected;
+            value.DisabledDomains=DomainSelection.NormalizeDisabled(value.DisabledDomains);
+            Guid presetId;
+            value.SelectedPresetId=Guid.TryParse(value.SelectedPresetId,out presetId)?presetId.ToString("N"):"";
             if(value.Mode<0||value.Mode>2)value.Mode=0;
             if(!Profiles.IsTlsStrategy(value.Strategy))value.Strategy="split";
             if(!Profiles.IsTlsStrategy(value.DiscordStrategy))value.DiscordStrategy="";
@@ -148,8 +154,10 @@ namespace LocalLink
                 {"Services",value.Services},{"Mode",value.Mode},{"Strategy",value.Strategy},
                 {"DiscordStrategy",value.DiscordStrategy},
                 {"Quic",value.Quic},{"DiscordVoice",value.DiscordVoice},{"TelegramNative",value.TelegramNative},
-                {"UsePublicLists",value.UsePublicLists},{"CustomDomains",value.CustomDomains},
-                {"Endpoint",value.Endpoint},{"Port",value.Port},{"Appearance",value.Appearance}
+                {"UsePublicLists",value.UsePublicLists},{"UseCustomDomains",value.UseCustomDomains},
+                {"DisabledDomains",value.DisabledDomains},{"CustomDomains",value.CustomDomains},
+                {"Endpoint",value.Endpoint},{"Port",value.Port},{"Appearance",value.Appearance},
+                {"SelectedPresetId",value.SelectedPresetId}
             };
             return Serializer().Serialize(fields);
         }

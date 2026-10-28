@@ -28,6 +28,7 @@ locallink-bug-report-*.json
 *.backup-*
 settings-v*.json
 build-info.json
+/SOURCE-MANIFEST.json
 runtime-manifest.json
 
 # Private credentials and obsolete activation data

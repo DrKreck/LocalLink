@@ -15,7 +15,7 @@ namespace LocalLink
         {
             assertions = 0;
             List<ServiceEntry> all = ServiceCatalog.All();
-            Check(all.Count == 6, "six explicit services");
+            Check(all.Count == 7, "seven explicit services including DCS");
             List<string> ids = new List<string>();
             HashSet<string> unique = new HashSet<string>(StringComparer.Ordinal);
             foreach (ServiceEntry entry in all)
@@ -26,7 +26,10 @@ namespace LocalLink
                 Check(Profiles.ValidateDomains(String.Join("\n", entry.Domains)).Length > 0, "curated domains validated");
             }
             string combined = ServiceCatalog.DomainsFor(ids, String.Empty);
-            Check(Profiles.ValidateDomains(combined).Length <= 32, "all primary service domains fit narrow limit");
+            Check(Profiles.ValidateDomains(combined).Length <= 128, "all primary service domains fit bounded inline limit");
+            var customMany=new List<string>();for(int i=0;i<32;i++)customMany.Add("custom"+i+".example.org");
+            Check(Profiles.ValidateDomains(ServiceCatalog.DomainsFor(ids,String.Join("\n",customMany))).Length==Profiles.ValidateDomains(combined).Length+32,"built-in categories do not consume the user's custom-domain allowance");
+            Check(ServiceDiagnostics.ManualRows("dcs").Count==1,"DCS game connection remains an honest manual check");
             string duplicate = ServiceCatalog.DomainsFor(new[] { "discord", "DISCORD" }, "discord.com\nExample.Org");
             Check(Profiles.ValidateDomains(duplicate).Length == ServiceCatalog.All()[0].Domains.Length + 1, "case insensitive service ids and domain deduplication");
             Check(ServiceCatalog.DomainsFor(new string[0], "") == "", "empty selection stays empty");

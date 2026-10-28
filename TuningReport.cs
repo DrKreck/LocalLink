@@ -29,7 +29,7 @@ namespace LocalLink
                     Profile=ProfileSummary.FromFields(evidence.Profile.Fields()).Fields()};
             var report=new {Schema="locallink-tls-tuning-v1",ExportedUtc=DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture),
                 Scope=result.Scope=="discord"?"discord":"general",
-                result.Enabled,result.Verified,result.Cancelled,result.TimedOut,Strategy=Strategy(result.Strategy),
+                result.Enabled,result.Verified,result.Cancelled,result.TimedOut,result.VpnOverride,Strategy=Strategy(result.Strategy),
                 BaselinePassed=Count(result.BaselinePassed),BaselineFailed=Count(result.BaselineFailed),BaselineUnknown=Count(result.BaselineUnknown),
                 BaselineServices=Services(result.BaselineServices),BaselineProbes=Probes(result.BaselineProbes),Trials=trials,RecordedEngineProfile=profile,Limits=Tuning.ResultLimits,
                 StateMeaning="Results describe the completed tuning run, not the current connection. RecordedEngineProfile describes the last owned launch and may be stopped/historical; it is not proof of packet delivery. Unknown/manual rows are not successes."};
@@ -58,7 +58,7 @@ namespace LocalLink
             return result;
         }
         static bool KnownService(string value)
-        {return value=="control"||value=="discord"||value=="youtube"||value=="steam"||value=="arma"||value=="tarkov";}
+        {return value=="control"||value=="discord"||value=="youtube"||value=="steam"||value=="arma"||value=="tarkov"||value=="dcs";}
         public static string Export(string appRoot,TuningResult result,ProfileLaunchEvidence evidence=null)
         {
             if(result==null)throw new ArgumentNullException("result");
