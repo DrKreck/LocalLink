@@ -14,6 +14,8 @@ namespace LocalLink
     // identifier, certificate, account or packet is exposed by these models.
     public sealed class ProfileSummary
     {
+        // Up to 128 selected hosts plus fixed protocol-specific host groups.
+        const int MaximumInlineSummaryDomains=160;
         public string Mode { get; private set; }
         public string Strategy { get; private set; }
         public string DiscordStrategy { get; private set; }
@@ -87,7 +89,7 @@ namespace LocalLink
                 strategy!="fake-disorder"&&strategy!="wireguard"&&strategy!="unrecognized")throw Invalid();
             string tcp=NormalizePorts(Text(fields,"TcpPorts")),udp=NormalizePorts(Text(fields,"UdpPorts"));
             if(tcp!=Text(fields,"TcpPorts")||udp!=Text(fields,"UdpPorts"))throw Invalid();
-            int profiles=Integer(fields,"ProfileCount",1,32),inline=Integer(fields,"InlineDomainCount",0,64);
+            int profiles=Integer(fields,"ProfileCount",1,32),inline=Integer(fields,"InlineDomainCount",0,MaximumInlineSummaryDomains);
             int? external=fields["ExternalListDomainCount"]==null?(int?)null:Integer(fields,"ExternalListDomainCount",1,2000000);
             bool list=Flag(fields,"UsesExternalList"),endpoint=Flag(fields,"EndpointScoped"),quic=Flag(fields,"Quic"),
                 voice=Flag(fields,"DiscordVoice"),telegram=Flag(fields,"TelegramNative"),verified=Flag(fields,"EngineFilesVerifiedAtPreflight");
@@ -144,7 +146,7 @@ namespace LocalLink
                 if(argument=="--filter-l7=mtproto,unknown")telegram=true;
                 if(argument=="--filter-l7=wireguard")wireguard=true;
             }
-            if(profiles>32||domains.Count>64||count==0)throw Invalid();
+            if(profiles>32||domains.Count>MaximumInlineSummaryDomains||count==0)throw Invalid();
             // With a Discord override the first TLS profile is dedicated.
             // Infer the GENERAL method from the second TLS443 profile, never
             // from the UI setting or the override's method by accident.

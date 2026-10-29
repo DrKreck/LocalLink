@@ -18,7 +18,14 @@ $cases = @(
     @('PublicBuildTests','PublicBuildTests'),
     @('DependencyUiTests','DependencyUiTests'),
     @('DomainManagerUiTests','DomainManagerUiTests'),
-    @('PresetUiTests','PresetUiTests')
+    @('PresetUiTests','PresetUiTests'),
+    @('ApplicationFeatureUiTests','ApplicationFeatureUiTests'),
+    @('UpdatePromptTests','UpdatePromptTests'),
+    @('SettingsNavigationTests','SettingsNavigationTests'),
+    @('PresetExchangeUiTests','PresetExchangeUiTests'),
+    @('AutomaticConnectionUiTests','AutomaticConnectionUiTests'),
+    @('AutomaticOnboardingTests','AutomaticOnboardingTests'),
+    @('UpdateStartupUiTests','UpdateStartupUiTests')
 )
 foreach ($case in $cases) {
     $test = Join-Path $directory ($case[0]+'.exe')

@@ -24,7 +24,7 @@ namespace LocalLink
                 // workspaces. The GUID still isolates every run; no cleanup.
                 fixture=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"pe-"+Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(fixture);
-                TestSummaries();TestCoverage();TestPrivacy();TestReceipts();TestFailures();TestReparse();
+                TestSummaries();TestLargeSummary();TestCoverage();TestPrivacy();TestReceipts();TestFailures();TestReparse();
                 Console.WriteLine("Profile evidence: "+assertions+" offline assertions passed; no real engine, network, appdata or deletion.");
                 return 0;
             }
@@ -33,6 +33,14 @@ namespace LocalLink
                 Console.Error.WriteLine("Profile evidence fixture failed: "+error.GetType().Name);
                 return 1;
             }
+        }
+        static void TestLargeSummary()
+        {
+            var domains=new List<string>();for(int i=0;i<128;i++)domains.Add("host"+i+".example.org");
+            var spec=new ProfileSpec{Domains=String.Join("\n",domains),Strategy="disorder",DiscordStrategy="sni-split",DiscordVoice=true};
+            var summary=ProfileSummary.FromArguments(Profiles.Build(spec),null,true,Sha);
+            Check(summary.InlineDomainCount>=128,"full supported domain selection does not fail profile evidence");
+            Check(ProfileSummary.FromFields(summary.Fields()).InlineDomainCount==summary.InlineDomainCount,"full profile evidence survives report roundtrip");
         }
         static void TestSummaries()
         {

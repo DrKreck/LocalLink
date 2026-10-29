@@ -75,6 +75,11 @@ internal static class TypographyLayoutTests
                 CheckPage(form, engine, fixture + "/main");
                 shell.OpenSettings();
                 CheckPage(form, engine, fixture + "/settings");
+                foreach(string section in new[]{"applications","profiles","updates"})
+                {
+                    typeof(MainForm).GetMethod("SelectSettingsSection",Private).Invoke(form,new object[]{section});
+                    CheckPage(form,engine,fixture+"/settings-"+section);
+                }
                 typeof(MainForm).GetMethod("SetAdvancedSettings", Private).Invoke(form, new object[] { true });
                 Check(((Panel)Field("advancedSettings").GetValue(form)).Visible, fixture + ": advanced settings expanded");
                 CheckPage(form, engine, fixture + "/settings-expanded");

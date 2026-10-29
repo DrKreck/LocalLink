@@ -28,8 +28,11 @@ internal sealed class TelegramBridgeWindow : Form
     private byte[] secret;
     private bool ready, quitting, cleaned;
     private bool checkingNetwork, lastFailure;
+    private readonly bool automaticSetup;
+    private bool startupVisibilityHandled, startupStarted, automaticOfferAttempted, automaticFailureShown;
     private int generation, connectedCount, restartAttempts;
     private DateTime restartWindow = DateTime.UtcNow;
+    private DateTime childStartedUtc;
     private Tuple<int, IPAddress> currentBinding;
     private const int Port = 1443;
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("LocalLink.TelegramBridge.preview.v1");
@@ -37,7 +40,9 @@ internal sealed class TelegramBridgeWindow : Form
     [STAThread]
     public static int Main(string[] args)
     {
-        if (args.Length == 1 && args[0] == "--self-test")
+        bool automatic, selfTest;
+        if (!TryParseArguments(args, out automatic, out selfTest)) return 2;
+        if (selfTest)
         {
             byte[] test = new byte[16];
             using (var rng = RandomNumberGenerator.Create()) rng.GetBytes(test);
@@ -58,17 +63,31 @@ internal sealed class TelegramBridgeWindow : Form
         {
             if (!first)
             {
-                MessageBox.Show("Модуль Telegram уже запущен. Откройте его значок в трее.", "LocalLink — Telegram");
+                if (!automatic) MessageBox.Show("Модуль Telegram уже запущен. Откройте его значок в трее.", "LocalLink — Telegram");
                 return 0;
             }
-            try { Application.Run(new TelegramBridgeWindow()); }
+            try { Application.Run(new TelegramBridgeWindow(automatic)); }
             finally { instance.ReleaseMutex(); }
         }
         return 0;
     }
 
-    internal TelegramBridgeWindow()
+    internal static bool TryParseArguments(string[] args, out bool automatic, out bool selfTest)
     {
+        automatic = selfTest = false;
+        if (args == null) return false;
+        if (args.Length == 0) return true;
+        if (args.Length != 1) return false;
+        if (args[0] == "--auto-setup") { automatic = true; return true; }
+        if (args[0] == "--self-test") { selfTest = true; return true; }
+        return false;
+    }
+
+    internal TelegramBridgeWindow() : this(false) { }
+    internal TelegramBridgeWindow(bool autoSetup)
+    {
+        automaticSetup = autoSetup;
+        ShowInTaskbar = !automaticSetup;
         Text = "LocalLink — Telegram";
         Size = new Size(590, 340); MinimumSize = Size; MaximumSize = Size;
         StartPosition = FormStartPosition.CenterScreen;
@@ -95,12 +114,39 @@ internal sealed class TelegramBridgeWindow : Form
         tray.ContextMenuStrip = menu;
         tray.DoubleClick += delegate { Show(); WindowState = FormWindowState.Normal; Activate(); };
         tray.Visible = true;
-        Shown += delegate { StartBridge(); if (!cleaned) networkTimer.Start(); };
+        Shown += delegate { BeginController(); };
         networkTimer.Tick += async delegate { if (!cleaned) await RefreshNetwork(false); };
         FormClosing += delegate(object sender, FormClosingEventArgs e) {
             if (!quitting && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); }
             else Cleanup();
         };
+    }
+
+    protected override void SetVisibleCore(bool value)
+    {
+        if (automaticSetup && !startupVisibilityHandled && value)
+        {
+            startupVisibilityHandled = true;
+            if (!IsHandleCreated) CreateHandle();
+            BeginInvoke((Action)BeginController);
+            base.SetVisibleCore(false);
+            return;
+        }
+        base.SetVisibleCore(value);
+    }
+    private void BeginController()
+    {
+        if (startupStarted || cleaned) return;
+        startupStarted = true;
+        StartBridge();
+        if (!cleaned) networkTimer.Start();
+    }
+    private void RevealAutomaticFailure()
+    {
+        if (!automaticSetup || automaticFailureShown || IsDisposed) return;
+        automaticFailureShown = true;
+        ShowInTaskbar = true;
+        Show(); WindowState = FormWindowState.Normal;
     }
 
     private void StartBridge()
@@ -116,6 +162,7 @@ internal sealed class TelegramBridgeWindow : Form
                 state.Text = "Нужно восстановить компоненты.";
                 details.Text = "Откройте LocalLink и снова нажмите «Открыть модуль Telegram».";
                 restart.Enabled = false;
+                RevealAutomaticFailure();
                 return;
             }
             string keyFile = Path.Combine(root, "proxy-secret.dpapi");
@@ -136,10 +183,10 @@ internal sealed class TelegramBridgeWindow : Form
                 }
             }
             var binding = SelectBinding(null);
-            if (binding == null) { state.Text = "Нужен один активный физический IPv4-адаптер."; return; }
+            if (binding == null) { state.Text = "Нужен один активный физический IPv4-адаптер."; RevealAutomaticFailure(); return; }
             StartChild(binding);
         }
-        catch { quitting = true; Cleanup(); state.Text = "Не удалось запустить модуль. Проверьте комплект runtime."; }
+        catch { quitting = true; Cleanup(); state.Text = "Не удалось запустить модуль. Проверьте комплект runtime."; RevealAutomaticFailure(); }
     }
 
     private static Tuple<int,IPAddress> ChooseBinding(List<Tuple<int,IPAddress>> bindings, Tuple<int,IPAddress> previous)
@@ -208,7 +255,7 @@ internal sealed class TelegramBridgeWindow : Form
             if (!AssignProcessToJobObject(job, child.Handle)) { child.Kill(); throw new InvalidOperationException(); }
             child.BeginOutputReadLine(); child.BeginErrorReadLine();
             child.StandardInput.WriteLine(Hex(secret)); child.StandardInput.Close();
-            currentBinding = binding;
+            currentBinding = binding; childStartedUtc = DateTime.UtcNow;
         }
         catch { StopChild(); throw; }
     }
@@ -228,14 +275,19 @@ internal sealed class TelegramBridgeWindow : Form
                 return; // Do not select a VPN or guess between new physical adapters.
             }
             bool changed = previous == null || previous.Item1 != next.Item1 || !previous.Item2.Equals(next.Item2);
-            if (!force && !changed && child != null && !child.HasExited) return;
+            if (!force && !changed && child != null && !child.HasExited)
+            {
+                if (!ready && DateTime.UtcNow - childStartedUtc > TimeSpan.FromSeconds(20))
+                { StopChild(); state.Text = "Модуль не подтвердил готовность. Повторяем запуск…"; RevealAutomaticFailure(); }
+                return;
+            }
             if (!force && !changed && restartAttempts >= 5 && DateTime.UtcNow - restartWindow < TimeSpan.FromMinutes(1))
-            { state.Text = "Повторные запуски не помогли. Нажмите «Перезапустить»."; return; }
+            { state.Text = "Повторные запуски не помогли. Нажмите «Перезапустить»."; RevealAutomaticFailure(); return; }
             state.Text = changed ? "Сеть изменилась. Восстанавливаем мост…" : "Перезапуск моста…";
             StopChild();
             if (!cleaned) StartChild(next);
         }
-        catch { if (!cleaned) state.Text = "Восстановление пока не удалось. Можно повторить вручную."; }
+        catch { if (!cleaned) { state.Text = "Восстановление пока не удалось. Можно повторить вручную."; RevealAutomaticFailure(); } }
         finally { checkingNetwork = false; if (!cleaned) restart.Enabled = true; }
     }
 
@@ -264,7 +316,7 @@ internal sealed class TelegramBridgeWindow : Form
                 if (cleaned || ownerGeneration != generation || child != owner || owner.HasExited) return;
                 object count;
                 if (data.TryGetValue("connected", out count) && count is int && (int)count >= 0 && (int)count <= 8) connectedCount = (int)count;
-                if (code == "listening") { ready = true; connect.Enabled = true; state.Text = "Готов · 127.0.0.1:" + Port; }
+                if (code == "listening") { ready = true; connect.Enabled = true; state.Text = "Готов · 127.0.0.1:" + Port; OfferAutomaticProxy(); }
                 else if (code == "upstream_connected" || code == "connection_closed")
                 {
                     if (code == "upstream_connected") lastFailure = false;
@@ -274,10 +326,94 @@ internal sealed class TelegramBridgeWindow : Form
                 else if (code == "client_rejected") state.Text = "Входящее подключение отклонено. Проверьте настройки прокси.";
                 else if (code == "connection_failed") { lastFailure = true; state.Text = connectedCount > 0 ?
                     "WSS-подключений: " + connectedCount + "; одна попытка не удалась." : "Пока нет ответа от Telegram. Клиент может повторить попытку."; }
-                else if (code == "fatal") { ready = false; connect.Enabled = false; state.Text = "Модуль не запущен: порт занят или параметры недоступны."; }
+                else if (code == "fatal") { ready = false; connect.Enabled = false; state.Text = "Модуль не запущен: порт занят или параметры недоступны."; RevealAutomaticFailure(); }
             });
         }
         catch { }
+    }
+
+    private void OfferAutomaticProxy()
+    {
+        if (!automaticSetup || automaticOfferAttempted || cleaned || !ready || secret == null) return;
+        automaticOfferAttempted = true;
+        try
+        {
+            bool offered = TryOfferAutomaticProxy(AppDomain.CurrentDomain.BaseDirectory, secret, delegate {
+                Process.Start(new ProcessStartInfo(BuildProxyUri(secret)) { UseShellExecute = true });
+            });
+            if (offered) details.Text = "Подтвердите подключение прокси в окне Telegram. Подтверждение клиента LocalLink не читает.";
+        }
+        catch
+        {
+            state.Text = "Не удалось предложить настройку Telegram.";
+            details.Text = "Нажмите «Подключить Telegram», чтобы повторить. Настройки аккаунта не изменялись.";
+            RevealAutomaticFailure();
+        }
+    }
+
+    internal static bool TryOfferAutomaticProxy(string folder, byte[] ownSecret, Action launch)
+    {
+        if (ownSecret == null || ownSecret.Length != 16) throw new ArgumentException("Нужен секрет собственного локального модуля.", "ownSecret");
+        if (launch == null) throw new ArgumentNullException("launch");
+        string marker = OfferMarkerPath(folder), fingerprint;
+        using (var sha = SHA256.Create()) fingerprint = Hex(sha.ComputeHash(ownSecret));
+        if (File.Exists(marker) && ReadOfferFingerprint(marker) == fingerprint) return false;
+        // Mark the offer attempt before external UI launch. Even a crash or a
+        // rejected Telegram confirmation cannot create repeated prompts on boot.
+        // This is not evidence that Telegram accepted or enabled its proxy.
+        byte[] bytes = Encoding.UTF8.GetBytes(new JavaScriptSerializer().Serialize(new Dictionary<string, object> {
+            { "Schema", 1 }, { "SecretSha256", fingerprint }, { "Offered", true } }));
+        string temporary = marker + ".staged-" + Guid.NewGuid().ToString("N");
+        SafeOfferPath(temporary);
+        using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+        { stream.Write(bytes, 0, bytes.Length); stream.Flush(true); }
+        SafeOfferPath(marker);
+        if (File.Exists(marker)) File.Replace(temporary, marker, marker + ".backup-" + Guid.NewGuid().ToString("N"));
+        else File.Move(temporary, marker);
+        launch(); return true;
+    }
+    private static string BuildProxyUri(byte[] ownSecret)
+    {
+        if (ownSecret == null || ownSecret.Length != 16) throw new ArgumentException("Недопустимый секрет локального модуля.");
+        return "tg://proxy?server=127.0.0.1&port=" + Port + "&secret=" + Hex(ownSecret);
+    }
+    private static string OfferMarkerPath(string folder)
+    {
+        if (String.IsNullOrWhiteSpace(folder) || folder.Length < 3 || folder[1] != ':' || (folder[2] != '\\' && folder[2] != '/') || folder.IndexOf(':', 2) >= 0)
+            throw new ArgumentException("Нужна локальная папка модуля.", "folder");
+        string root = Path.GetFullPath(folder);
+        SafeOfferPath(root);
+        if (!Directory.Exists(root)) throw new IOException("Папка модуля отсутствует.");
+        string marker = Path.Combine(root, "proxy-link-offered-v1.json"); SafeOfferPath(marker); return marker;
+    }
+    private static string ReadOfferFingerprint(string marker)
+    {
+        SafeOfferPath(marker); byte[] bytes;
+        using (var stream = new FileStream(marker, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            if (stream.Length < 1 || stream.Length > 512) throw new IOException("Некорректная отметка настройки Telegram.");
+            bytes = new byte[(int)stream.Length]; int offset = 0, read;
+            while (offset < bytes.Length && (read = stream.Read(bytes, offset, bytes.Length - offset)) > 0) offset += read;
+            if (offset != bytes.Length || stream.ReadByte() != -1) throw new IOException("Отметка настройки изменилась при чтении.");
+        }
+        var value = new JavaScriptSerializer { MaxJsonLength = 512, RecursionLimit = 4 }.DeserializeObject(new UTF8Encoding(false, true).GetString(bytes)) as Dictionary<string, object>;
+        object schema, offered, hash;
+        if (value == null || value.Count != 3 || !value.TryGetValue("Schema", out schema) || !(schema is int) || (int)schema != 1 ||
+            !value.TryGetValue("Offered", out offered) || !(offered is bool) || !(bool)offered || !value.TryGetValue("SecretSha256", out hash))
+            throw new IOException("Некорректная отметка настройки Telegram.");
+        string fingerprint = hash as string;
+        if (fingerprint == null || fingerprint.Length != 64 || fingerprint.Any(c => !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f')))
+            throw new IOException("Некорректный отпечаток настройки Telegram.");
+        return fingerprint;
+    }
+    private static void SafeOfferPath(string file)
+    {
+        for (string path = Path.GetFullPath(file); !String.IsNullOrEmpty(path); path = Path.GetDirectoryName(path))
+        {
+            FileAttributes attributes;
+            try { attributes = File.GetAttributes(path); } catch (FileNotFoundException) { continue; } catch (DirectoryNotFoundException) { continue; }
+            if ((attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("Перенаправления папки модуля не поддерживаются.");
+        }
     }
 
     private void OpenTelegram()
@@ -288,7 +424,7 @@ internal sealed class TelegramBridgeWindow : Form
             if (cleaned || !ready || secret == null || child == null || child.HasExited) return;
             // Own loopback credential only; never read account/session keys.
             // Telegram presents its own confirmation before changing its proxy.
-            string uri = "tg://proxy?server=127.0.0.1&port=" + Port + "&secret=" + Hex(secret);
+            string uri = BuildProxyUri(secret);
             Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
         }
         catch { state.Text = "Не удалось открыть Telegram. Настройка приложения не менялась."; }
@@ -310,8 +446,10 @@ internal sealed class TelegramBridgeWindow : Form
         restart.Enabled = false;
         try { StopChild(); } catch { } // Closing the owned job is the final cleanup mechanism.
         if (secret != null) { Array.Clear(secret, 0, secret.Length); secret = null; }
-        tray.Visible = false; tray.Dispose();
+        tray.Visible = false; if (tray.ContextMenuStrip != null) tray.ContextMenuStrip.Dispose(); tray.Dispose();
     }
+    protected override void Dispose(bool disposing)
+    { if (disposing) Cleanup(); base.Dispose(disposing); }
     [StructLayout(LayoutKind.Sequential)] private struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
         public long PerProcessUserTimeLimit, PerJobUserTimeLimit; public uint LimitFlags; public UIntPtr MinimumWorkingSetSize, MaximumWorkingSetSize;
         public uint ActiveProcessLimit; public UIntPtr Affinity; public uint PriorityClass, SchedulingClass;

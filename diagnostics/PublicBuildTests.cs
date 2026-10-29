@@ -17,9 +17,11 @@ internal static class PublicBuildTests
             var main = Assembly.LoadFile(Path.Combine(root, "LocalLink.exe"));
             var embeddedLauncher = ReadResource(main, "LocalLink.TelegramLauncher");
             Check(embeddedLauncher.Length > 1024 && embeddedLauncher[0] == 'M' && embeddedLauncher[1] == 'Z', "Telegram launcher embedded in the application.");
-            foreach (var assembly in new[] { main, Assembly.Load(embeddedLauncher) })
+            var updateHelper=ReadResource(main,"LocalLink.UpdateHelper");
+            Check(updateHelper.Length>1024&&updateHelper[0]=='M'&&updateHelper[1]=='Z',"Update helper embedded in the application.");
+            foreach (var assembly in new[] { main, Assembly.Load(embeddedLauncher),Assembly.Load(updateHelper) })
             {
-                Check(assembly.GetName().Version == new Version(0, 8, 5, 0), "Unexpected executable version.");
+                Check(assembly.GetName().Version == new Version(0, 9, 0, 0), "Unexpected executable version.");
                 var names = assembly.GetTypes().Select(t => t.FullName).ToArray();
                 foreach (string forbidden in new[] { "LicenseGate", "LicensePolicy", "OfflineLicense", "Enrollment", "AdminHost", "OfflineAdmin" })
                     Check(!names.Any(n => n.IndexOf(forbidden, StringComparison.OrdinalIgnoreCase) >= 0), "Obsolete access-control code remains: " + forbidden);
@@ -33,6 +35,9 @@ internal static class PublicBuildTests
             Check(main.GetType("LocalLink.DependencyInstaller", false) != null, "In-app component installer missing.");
             Check(main.GetType("LocalLink.SetupPrompt", false) != null, "Component confirmation dialog missing.");
             Check(main.GetType("LocalLink.BootstrapPayload", false) != null, "Embedded Telegram preparation missing.");
+            foreach(string feature in new[]{"AppUpdateClient","AppUpdateHealth","RecoveryPolicy","NetworkPresetStore","TroubleshootingForm"})
+                Check(main.GetType("LocalLink."+feature,false)!=null,"Required application feature missing: "+feature);
+            Check(ReadResource(main,"LocalLink.UpdateHelperConfig").Length>0,"Update helper runtime configuration is embedded.");
             Check(main.GetType("LocalLink.PageDeck", false) == null, "Obsolete page navigation remains.");
             foreach (string resource in new[] { "LocalLink.EngineManifest", "LocalLink.RuntimeManifest", "LocalLink.DependencyManifest", "LocalLink.TelegramScript", "LocalLink.TelegramConfig" })
                 Check(ReadResource(main, resource).Length > 0, "Required bootstrap resource: " + resource);

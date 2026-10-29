@@ -28,6 +28,9 @@ namespace LocalLink
         public int Port = 443;
         public string Appearance = "system";
         public string SelectedPresetId = "";
+        public bool AutomaticRecovery = true;
+        public bool AutomaticSetup = true;
+        public bool ConnectOnOpen;
         [ScriptIgnore]
         public bool RecoveredFromBackup { get; private set; }
 
@@ -104,7 +107,8 @@ namespace LocalLink
             string folder=Path.GetDirectoryName(path);
             Directory.CreateDirectory(folder);
             RejectReparse(path);
-            // Explicit user choices only. No auto-start or persisted permission.
+            // Connection preferences never grant Windows privileges. Startup
+            // connection is opt-in and still uses normal UAC when needed.
             string json=SerializeSettings(Normalize(this));
             byte[] bytes=SettingsEncoding.GetBytes(json);
             if(bytes.Length>MaximumSettingsBytes)
@@ -157,7 +161,8 @@ namespace LocalLink
                 {"UsePublicLists",value.UsePublicLists},{"UseCustomDomains",value.UseCustomDomains},
                 {"DisabledDomains",value.DisabledDomains},{"CustomDomains",value.CustomDomains},
                 {"Endpoint",value.Endpoint},{"Port",value.Port},{"Appearance",value.Appearance},
-                {"SelectedPresetId",value.SelectedPresetId}
+                {"SelectedPresetId",value.SelectedPresetId},{"AutomaticRecovery",value.AutomaticRecovery},
+                {"AutomaticSetup",value.AutomaticSetup},{"ConnectOnOpen",value.ConnectOnOpen}
             };
             return Serializer().Serialize(fields);
         }

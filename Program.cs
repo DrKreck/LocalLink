@@ -45,6 +45,7 @@ namespace LocalLink
             bool elevatedStart=args.Length==1&&args[0]=="--elevated-start";
             bool elevatedRestart=elevatedStart||(args.Length==1&&args[0]=="--elevated-restart");
             bool startup=args.Length==1&&args[0]==StartupRegistration.StartupArgument;
+            bool updateHealth=args.Length==3&&args[0]=="--update-health";
             using(var mutex=new Mutex(true,render?"Local\\LocalLink.Preview.v3":"Local\\LocalLink.UI.v1",out owned))
             {
                 if(!owned)
@@ -71,6 +72,7 @@ namespace LocalLink
                     using(var form=new MainForm(render,args.Length>0&&args[0].IndexOf("-dark",StringComparison.Ordinal)>=0,args.Length>0&&args[0].IndexOf("-light",StringComparison.Ordinal)>=0,restore,true,startup,diagnostics))
                     {
                         if(elevatedRestart&&!render)form.ShowElevatedRestartNotice(elevatedStart);
+                        if(updateHealth&&!render){form.PrepareUpdateStartup(args);form.Shown+=delegate{AppUpdateHealth.Acknowledge(args);};}
                         if(render)
                         {
                             form.ShowInTaskbar=false;form.StartPosition=FormStartPosition.Manual;form.Location=new Point(-32000,-32000);
@@ -99,7 +101,7 @@ namespace LocalLink
         }
     }
 
-    public sealed class MainForm : Form
+    public sealed partial class MainForm : Form
     {
         readonly bool preview,forceDark,forceLight,persistPreferences,startInTray;
         readonly DiagnosticHistory history;readonly bool ownsHistory;
@@ -155,6 +157,8 @@ namespace LocalLink
             ownsHistory=diagnosticHistory==null;history=diagnosticHistory??DiagnosticHistory.CreateDefault(!preview&&persistPreferences);
             settings=preview||!persistPreferences?new AppSettings():AppSettings.Load();
             presetStore=new PresetStore(preview||!persistPreferences?Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"presets-preview"):PresetStore.DefaultFolder);
+            InitializeApplicationFeatures();
+            InitializeAutomaticConnection();InitializePresetExchange();
             useCustomDomains=settings.UseCustomDomains;disabledDomains=new List<string>(settings.DisabledDomains);
             Text="LocalLink";Icon=applicationIcon;ClientSize=new Size(980,720);MinimumSize=new Size(820,620);StartPosition=FormStartPosition.CenterScreen;
             Font=AppTheme.Font(10.5f,FontStyle.Regular);AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;KeyPreview=true;Tag="root";
@@ -176,7 +180,7 @@ namespace LocalLink
             };
             tips.SetToolTip(shell.Appearance,"Оформление только LocalLink. Применяется сразу, не меняет тему Windows и не перезапускает обработку.");
             mode.SelectedIndexChanged+=delegate{if(mode.SelectedIndex!=0)SetAdvancedSettings(true);RefreshControls();};
-            primary.Click+=async delegate{if(busy||engine.IsRunning)StopOperation();else await StartAsync();};
+            primary.Click+=async delegate{if(busy||automaticConnecting||engine.IsRunning||recoveryPolicy.Pending)StopOperation();else await StartAsync();};
             check.Click+=async delegate{await CheckAsync();};tune.Click+=async delegate{shell.CloseSettings();await TuneAsync();};exportTuning.Click+=delegate{ExportTuning();};
             bugReport.Click+=async delegate{await ExportBugReportAsync();};
             contact.Click+=delegate{OpenContact();};
@@ -185,7 +189,6 @@ namespace LocalLink
             presetChoice.SelectedIndexChanged+=delegate{if(!loadingPreset)LoadChosenPreset();};
             tuneDiscord.Click+=async delegate{shell.CloseSettings();await TuneDiscordAsync();};
             shell.SettingsOpenChanged+=delegate{Record(shell.SettingsOpen?"settings_opened":"settings_closed");if(!shell.SettingsOpen)Save();};
-            advancedToggle.Click+=delegate{SetAdvancedSettings(!advancedExpanded);};
             manageDomains.Click+=delegate{OpenDomainManager();};
             showDetails.CheckedChanged+=delegate{RebuildVisibleRows();};
             elevate.Click+=delegate{Elevate();};find.Click+=delegate{Discover();};updateLists.Click+=async delegate{await UpdateListsAsync();};
@@ -196,7 +199,7 @@ namespace LocalLink
             results.Resize+=delegate{ResizeColumns();};
             results.VisibleChanged+=delegate
             {if(results.Visible&&IsHandleCreated&&!closing)BeginInvoke((Action)ResizeColumns);};
-            timer.Interval=350;timer.Tick+=delegate{if(!closing&&restoreSignal!=null&&restoreSignal.WaitOne(0))RestoreWindow();InspectEngineExit();RefreshControls();};timer.Start();
+            timer.Interval=350;timer.Tick+=delegate{if(!closing&&restoreSignal!=null&&restoreSignal.WaitOne(0))RestoreWindow();InspectEngineExit();TickApplicationFeatures();RefreshControls();};timer.Start();
             // Escape must not silently disconnect applications or cancel voice traffic.
             KeyDown+=delegate(object sender,KeyEventArgs e){if(e.KeyCode==Keys.Escape&&shell.SettingsOpen){shell.CloseSettings();e.Handled=true;e.SuppressKeyPress=true;}else if(e.KeyCode==Keys.Escape&&(busy||engine.IsRunning)){e.Handled=true;e.SuppressKeyPress=true;}};
             FormClosing+=OnClosing;FormClosed+=delegate{DisposeOwnedResources();};
@@ -206,8 +209,6 @@ namespace LocalLink
             if(!preview&&settings.RecoveredFromBackup)Write("Настройки восстановлены из резервного варианта. Повреждённый файл не удалялся.");
             SetAdvancedSettings(settings.Mode!=0);ApplyTheme();RefreshLists();RefreshPresets(settings.SelectedPresetId);RefreshControls();RefreshStartup();RefreshDiagnosticsNotice();
             RecordConfiguration();
-            if(!preview&&!startInTray&&persistPreferences)Shown+=async delegate
-            {if(await EnsureDependenciesAsync()&&resumeStartAfterElevation){resumeStartAfterElevation=false;await StartAsync();}};
         }
 
         protected override void SetVisibleCore(bool value)
@@ -247,14 +248,15 @@ namespace LocalLink
         void BuildDiagnostics(Panel page)
         {
             page.Padding=new Padding(24,20,24,20);
-            var grid=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=4,Margin=Padding.Empty};
+            var grid=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=5,Margin=Padding.Empty};diagnosticsLayout=grid;
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute,0));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute,132));grid.RowStyles.Add(new RowStyle(SizeType.Absolute,48));grid.RowStyles.Add(new RowStyle(SizeType.Percent,100));grid.RowStyles.Add(new RowStyle(SizeType.Absolute,42));
-            page.Controls.Add(grid);grid.Controls.Add(BuildWorkflow());
+            page.Controls.Add(grid);grid.Controls.Add(BuildNetworkSuggestion(),0,0);grid.Controls.Add(BuildWorkflow(),0,1);
             var heading=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=4,RowCount=1,Margin=Padding.Empty};
             heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,150));heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,150));heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,100));heading.RowStyles.Add(new RowStyle(SizeType.Percent,100));
-            heading.Controls.Add(Label("Проверка подключения",11.5f,true,false));Button(bugReport,"Баг-репорт",false);bugReport.Margin=new Padding(0,6,8,6);bugReport.AccessibleName="Создать баг-репорт";heading.Controls.Add(bugReport);
-            Button(contact,"@AresC404",false);contact.Margin=new Padding(0,6,0,6);contact.AccessibleName="Открыть Telegram @AresC404";heading.Controls.Add(contact);grid.Controls.Add(heading);
+            Button(troubleshoot,"Что не работает?",false);troubleshoot.Margin=new Padding(0,6,8,6);troubleshoot.AccessibleName="Мастер диагностики проблемы";heading.Controls.Add(troubleshoot);Button(bugReport,"Баг-репорт",false);bugReport.Margin=new Padding(0,6,8,6);bugReport.AccessibleName="Создать баг-репорт";heading.Controls.Add(bugReport);
+            Button(contact,"@AresC404",false);contact.Margin=new Padding(0,6,0,6);contact.AccessibleName="Открыть Telegram @AresC404";heading.Controls.Add(contact);grid.Controls.Add(heading,0,2);
             Button(emailContact,"Почта",false);emailContact.Margin=new Padding(8,6,0,6);emailContact.AccessibleName="Написать на почту kirill0063@gmail.com";tips.SetToolTip(emailContact,ContactLink.Email);heading.Controls.Add(emailContact);
             tips.SetToolTip(bugReport,"Сохранить ZIP с историей LocalLink и результатами проверок. Ничего не отправляется; фильтр продолжит работать.");
             tips.SetToolTip(contact,"Открыть t.me/AresC404. Прикрепите ZIP вручную — приложение ничего не отправляет.");
@@ -270,81 +272,13 @@ namespace LocalLink
                 int inset=Math.Max(7,(int)Math.Round(e.Graphics.DpiX/96f*7));
                 TextRenderer.DrawText(e.Graphics,e.Header.Text,results.Font,new Rectangle(e.Bounds.X+inset,e.Bounds.Y,Math.Max(1,e.Bounds.Width-2*inset),e.Bounds.Height),theme.Muted,TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis|TextFormatFlags.NoPadding|TextFormatFlags.NoPrefix);
             };
-            results.Columns.Add("Сервис",425);results.Columns.Add("Результат",160);results.Columns.Add("Время",80);grid.Controls.Add(results);
-            detail.Text="";detail.Dock=DockStyle.Fill;detail.Margin=Padding.Empty;detail.TextAlign=ContentAlignment.MiddleLeft;detail.Font=AppTheme.Font(9.5f,FontStyle.Regular);detail.Tag="muted";detail.AutoEllipsis=true;grid.Controls.Add(detail);
+            results.Columns.Add("Сервис",425);results.Columns.Add("Результат",160);results.Columns.Add("Время",80);grid.Controls.Add(results,0,3);
+            detail.Text="";detail.Dock=DockStyle.Fill;detail.Margin=Padding.Empty;detail.TextAlign=ContentAlignment.MiddleLeft;detail.Font=AppTheme.Font(9.5f,FontStyle.Regular);detail.Tag="muted";detail.AutoEllipsis=true;grid.Controls.Add(detail,0,4);
         }
         void BuildSettings(Panel page)
-        {
-            page.AutoScroll=true;page.Padding=new Padding(18,6,18,18);
-            var layout=new TableLayoutPanel{Dock=DockStyle.Top,AutoSize=true,ColumnCount=1,Margin=Padding.Empty};
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));page.Controls.Add(layout);
-            settingsNotice.Dock=DockStyle.Fill;settingsNotice.Margin=Padding.Empty;settingsNotice.Tag="muted";settingsNotice.Font=AppTheme.Font(9.5f,FontStyle.Regular);settingsNotice.TextAlign=ContentAlignment.MiddleLeft;
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute,42));layout.Controls.Add(settingsNotice);
-            var basic=new TableLayoutPanel{Dock=DockStyle.Top,AutoSize=true,ColumnCount=2,Margin=Padding.Empty};basic.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));basic.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));layout.Controls.Add(basic);
-            mode.Items.AddRange(new object[]{"Прямое подключение","Помощь VPN · TLS / TCP","Помощь VPN · WireGuard"});
-            strategy.Items.AddRange(new object[]{"Мягкий","По SNI","Перестановка","Фейк + разбиение","Фейк + перестановка"});
-            discordStrategy.Items.Add("Как общий метод");foreach(var label in strategy.Items)discordStrategy.Items.Add(label);
-            Combo(mode);Combo(strategy);Combo(discordStrategy);Combo(endpoints);
-            Field(basic,"Подключение",mode,0,0,88);Field(basic,"Метод",strategy,1,0,88);Field(basic,"Метод Discord",discordStrategy,0,1,88);
-            Button(tuneDiscord,"Подобрать для Discord",false);Field(basic,"Только Discord",tuneDiscord,1,1,88);
-            Button(tune,"Подобрать метод",false);basic.SetColumnSpan(Field(basic,"Автоподбор",tune,0,2,88),2);
-            Button(manageDomains,"Домены и категории",false);Field(basic,"Обработка сайтов",manageDomains,0,3,88);
-            ignoreVpn.Text="Игнорировать VPN · один подбор";ignoreVpn.Dock=DockStyle.Fill;ignoreVpn.AutoSize=true;
-            ignoreVpn.AccessibleName="Игнорировать VPN при следующем подборе";
-            Field(basic,"Принудительный подбор",ignoreVpn,1,3,88);
-            tips.SetToolTip(ignoreVpn,"Разрешает следующий автоподбор с VPN. Сам VPN не отключается; после запуска флажок сбрасывается.");
-            var presetActions=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=3,RowCount=1,Margin=Padding.Empty};
-            presetActions.RowStyles.Add(new RowStyle(SizeType.Percent,100));
-            presetActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));presetActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,140));presetActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,166));
-            Combo(presetChoice);presetChoice.DisplayMember="Name";presetChoice.AccessibleName="Выбранный пресет";
-            Button(savePreset,"Сохранить",false);savePreset.Margin=new Padding(8,0,0,0);Button(savePresetAs,"Сохранить как…",false);savePresetAs.Margin=new Padding(8,0,0,0);
-            presetActions.Controls.Add(presetChoice);presetActions.Controls.Add(savePreset);presetActions.Controls.Add(savePresetAs);
-            basic.SetColumnSpan(Field(basic,"Пресет · восстанавливается при запуске",presetActions,0,4,96),2);
-            Button(advancedToggle,"Дополнительно",false);advancedToggle.Margin=new Padding(0,8,0,12);layout.Controls.Add(advancedToggle);
-            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));layout.RowStyles.Add(new RowStyle(SizeType.Absolute,58));
-            advancedSettings.Dock=DockStyle.Top;advancedSettings.AutoSize=true;advancedSettings.Margin=Padding.Empty;layout.Controls.Add(advancedSettings);
-            var grid=advancedGrid;grid.Dock=DockStyle.Top;grid.AutoSize=true;grid.Margin=Padding.Empty;grid.ColumnCount=1;
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));advancedSettings.Controls.Add(grid);
-            var protocols=new FlowLayoutPanel{Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,Margin=Padding.Empty};
-            voice.Text="Голос Discord";telegram.Text="Telegram Desktop";quic.Text="QUIC / HTTP3";
-            foreach(var box in new[]{voice,telegram,quic}){box.AutoSize=true;box.Margin=new Padding(0,0,0,8);protocols.Controls.Add(box);}
-            Field(grid,"Дополнительные протоколы",protocols,0,0,174);
-            tips.SetToolTip(voice,"Экспериментальный UDP-профиль для голоса. Проверяется в звонке.");
-            tips.SetToolTip(telegram,"Обработка TCP Telegram. Для отдельного прокси используйте локальный мост.");
-            tips.SetToolTip(quic,"Экспериментальная обработка QUIC / HTTP3.");
-            custom.Multiline=true;custom.ScrollBars=ScrollBars.Vertical;custom.Dock=DockStyle.Fill;custom.BorderStyle=BorderStyle.FixedSingle;Field(grid,"Свои домены · по одному в строке",custom,0,1,170);
-            Button(updateLists,"Обновить список доменов",false);Field(grid,"Расширенный список",updateLists,0,2,88);
-            Button(elevate,"Права администратора",false);Field(grid,"Сетевой компонент",elevate,0,3,88);
-            var address=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty};address.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));address.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,78));
-            endpoint.Dock=DockStyle.Fill;port.Dock=DockStyle.Fill;port.Minimum=1;port.Maximum=65535;port.Value=443;port.Margin=new Padding(8,0,0,0);address.Controls.Add(endpoint);address.Controls.Add(port);Field(grid,"VPN · IP и порт",address,0,4,92);
-            Button(find,"Найти соединения VPN",false);Field(grid,"Соединения",find,0,5,88);Field(grid,"Выбрать соединение",endpoints,0,6,82);
-            var serviceList=new FlowLayoutPanel{Dock=DockStyle.Fill,FlowDirection=FlowDirection.TopDown,WrapContents=false,Margin=Padding.Empty};
-            foreach(var service in ServiceCatalog.All())
-            {
-                var box=new ThemedCheckBox{Text=service.Name,Checked=settings.Services.Contains(service.Id),AutoSize=true,Margin=new Padding(0,0,0,6)};
-                tips.SetToolTip(box,service.Scope);selections.Add(service.Id,box);serviceList.Controls.Add(box);
-            }
-            serviceList.Visible=false;page.Controls.Add(serviceList);
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute,0));
-            publicLists.Text="Остальной список";publicLists.Visible=false;serviceList.Controls.Add(publicLists);
-            listStatus.Dock=DockStyle.Fill;listStatus.Tag="muted";listStatus.Font=AppTheme.Font(9,FontStyle.Regular);listStatus.Margin=Padding.Empty;Field(grid,"Публичный список",listStatus,0,8,80);
-            showDetails.Text="Технические этапы проверки";showDetails.AutoSize=true;showDetails.Margin=Padding.Empty;Field(grid,"Диагностика",showDetails,0,9,82);
-            Button(exportTuning,"Сохранить отчёт подбора",false);Field(grid,"Отчёт",exportTuning,0,10,88);
-            log.Multiline=true;log.ReadOnly=true;log.ScrollBars=ScrollBars.Vertical;log.Dock=DockStyle.Fill;log.BorderStyle=BorderStyle.FixedSingle;log.Font=AppTheme.Font(9,FontStyle.Regular);Field(grid,"Журнал",log,0,11,160);
-            diagnosticsNotice.Dock=DockStyle.Fill;diagnosticsNotice.Tag="muted";diagnosticsNotice.Font=AppTheme.Font(9,FontStyle.Regular);diagnosticsNotice.AutoSize=true;grid.Controls.Add(diagnosticsNotice,0,12);grid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            var everyday=new TableLayoutPanel{Dock=DockStyle.Top,AutoSize=true,ColumnCount=1,Margin=new Padding(0,12,0,0)};everyday.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));layout.Controls.Add(everyday);
-            Button(telegramBridge,"Открыть модуль Telegram",false);Field(everyday,"Telegram",telegramBridge,0,0,88);
-            var startupActions=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty};startupActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));startupActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));startupActions.RowStyles.Add(new RowStyle(SizeType.Percent,100));
-            Button(startupToggle,"Добавить в автозапуск",false);Button(startupRemove,"Убрать из автозапуска",false);startupRemove.Margin=new Padding(8,0,0,0);startupActions.Controls.Add(startupToggle);startupActions.Controls.Add(startupRemove);Field(everyday,"При входе в Windows",startupActions,0,1,100);
-            startupStatus.Dock=DockStyle.Fill;startupStatus.Tag="muted";startupStatus.Font=AppTheme.Font(9,FontStyle.Regular);startupStatus.AutoSize=true;everyday.Controls.Add(startupStatus,0,2);everyday.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            tips.SetToolTip(startupToggle,"Запускает только приложение в трее. Сам фильтр не включается.");
-        }
+        {BuildOrganizedSettings(page);}
         void SetAdvancedSettings(bool expanded)
-        {
-            advancedExpanded=expanded;advancedSettings.Visible=expanded;
-            advancedToggle.Text=expanded?"Скрыть дополнительные":"Дополнительно";
-            advancedToggle.AccessibleName=advancedToggle.Text;advancedSettings.Parent.PerformLayout();
-        }
+        {SelectSettingsSection(expanded?"advanced":"basic");}
         Control Field(TableLayoutPanel grid,string title,Control control,int column,int row,int height)
         {
             while(grid.RowStyles.Count<=row)grid.RowStyles.Add(new RowStyle(SizeType.Absolute,height));
@@ -384,7 +318,7 @@ namespace LocalLink
         }
         List<string> Selected(){return selections.Where(x=>x.Value.Checked).Select(x=>x.Key).ToList();}
         AppSettings CaptureSettings()
-        {return new AppSettings{Services=Selected(),Mode=Math.Max(0,mode.SelectedIndex),Strategy=methods[Math.Max(0,strategy.SelectedIndex)],DiscordStrategy=discordStrategy.SelectedIndex>0?methods[discordStrategy.SelectedIndex-1]:"",Quic=quic.Checked,DiscordVoice=voice.Checked,TelegramNative=telegram.Checked,UsePublicLists=publicLists.Checked,UseCustomDomains=useCustomDomains,DisabledDomains=new List<string>(disabledDomains),CustomDomains=custom.Text,Endpoint=endpoint.Text.Trim(),Port=(int)port.Value,Appearance=SelectedAppearance(),SelectedPresetId=ChosenPresetId()};}
+        {return new AppSettings{Services=Selected(),Mode=Math.Max(0,mode.SelectedIndex),Strategy=methods[Math.Max(0,strategy.SelectedIndex)],DiscordStrategy=discordStrategy.SelectedIndex>0?methods[discordStrategy.SelectedIndex-1]:"",Quic=quic.Checked,DiscordVoice=voice.Checked,TelegramNative=telegram.Checked,UsePublicLists=publicLists.Checked,UseCustomDomains=useCustomDomains,DisabledDomains=new List<string>(disabledDomains),CustomDomains=custom.Text,Endpoint=endpoint.Text.Trim(),Port=(int)port.Value,Appearance=SelectedAppearance(),SelectedPresetId=ChosenPresetId(),AutomaticRecovery=autoRecovery.Checked,AutomaticSetup=automaticConnection.Checked,ConnectOnOpen=connectOnOpen.Checked};}
         string ChosenPresetId(){var value=presetChoice.SelectedItem as PresetEntry;return value==null?"":value.Id;}
         void RefreshPresets(string selectedId)
         {
@@ -401,7 +335,7 @@ namespace LocalLink
         }
         void SavePreset(bool saveAs)
         {
-            if(preview||busy||engine.IsRunning)return;
+            if(preview||busy||automaticConnecting||engine.IsRunning||recoveryPolicy.Pending)return;
             try
             {
                 var chosen=presetChoice.SelectedItem as PresetEntry;string id=saveAs?"":ChosenPresetId();
@@ -411,13 +345,14 @@ namespace LocalLink
                     using(var prompt=new PresetNamePrompt(theme,name)){if(prompt.ShowDialog(this)!=DialogResult.OK)return;name=prompt.PresetName;}
                 }
                 string saved=presetStore.Save(name,CaptureSettings(),String.IsNullOrEmpty(id)?null:id);
-                RefreshPresets(saved);settings=CaptureSettings();Save();Write("Пресет сохранён.");
+                RefreshPresets(saved);settings=CaptureSettings();Save();RefreshNetworkBinding();Write("Пресет сохранён.");
             }
             catch(Exception error){RecordFailure("preset_save",error);Write("Не удалось сохранить пресет: "+error.Message);}
         }
         void LoadChosenPreset()
         {
-            if(preview||busy||engine.IsRunning||String.IsNullOrEmpty(ChosenPresetId()))return;
+            if(preview||busy||automaticConnecting||engine.IsRunning||recoveryPolicy.Pending||String.IsNullOrEmpty(ChosenPresetId()))return;
+            loadingPreset=true;
             try
             {
                 string id=ChosenPresetId();var value=presetStore.Load(id);
@@ -428,13 +363,16 @@ namespace LocalLink
                 quic.Checked=value.Quic;voice.Checked=value.DiscordVoice;telegram.Checked=value.TelegramNative;publicLists.Checked=value.UsePublicLists;
                 endpoint.Text=value.Endpoint;port.Value=value.Port;custom.Text=value.CustomDomains;
                 shell.Appearance.SelectedIndex=Math.Max(0,Array.IndexOf(appearances,value.Appearance));
-                preparedExclusions="";ignoreVpn.Checked=false;Save();RefreshLists();RefreshControls();Write("Пресет загружен.");
+                autoRecovery.Checked=value.AutomaticRecovery;
+                automaticConnection.Checked=value.AutomaticSetup;
+            preparedExclusions="";ignoreVpn.Checked=false;Save();RefreshLists();RefreshControls();Write("Пресет загружен.");
             }
             catch(Exception error){RefreshPresets(settings.SelectedPresetId);RecordFailure("preset_load",error);Write("Не удалось загрузить пресет: "+error.Message);}
+            finally{loadingPreset=false;}
         }
         void OpenDomainManager()
         {
-            if(busy||engine.IsRunning)return;
+            if(busy||automaticConnecting||engine.IsRunning)return;
             string path="";
             try{path=PublicLists.GetActivePath(CancellationToken.None);}catch(IOException){}
             try
@@ -458,7 +396,14 @@ namespace LocalLink
             // Theme-only save preserves network drafts and never restarts the engine.
             try{settings.Save();}catch(Exception error){RecordFailure("theme",error);Write("Оформление применено, но сохранить выбор не удалось.");}
         }
-        void Save(){if(preview||!persistPreferences)return;try{settings=CaptureSettings();settings.Save();RecordConfiguration("settings_saved");}catch(Exception error){RecordFailure("settings",error);Write("Не удалось сохранить настройки. Текущие значения остались в окне.");}}
+        void Save(){try{SavePreferencesRequired();}catch(Exception error){RecordFailure("settings",error);Write("Не удалось сохранить настройки. Текущие значения остались в окне.");}}
+        void SavePreferencesRequired()
+        {
+            if(preview||!persistPreferences)return;
+            SavePreferencesTo(delegate(AppSettings value){value.Save();});
+        }
+        void SavePreferencesTo(Action<AppSettings> save)
+        {var captured=CaptureSettings();save(captured);settings=captured;RecordConfiguration("settings_saved");}
         ProfileSpec Spec()
         {
             bool direct=mode.SelectedIndex==0;string list="";
@@ -475,34 +420,36 @@ namespace LocalLink
         }
         void RefreshControls()
         {
-            if(closing)return;bool running=engine.IsRunning,editable=!busy&&!running,direct=mode.SelectedIndex==0;
-            status.Text=busy?workState+"…":running?"Фильтр включён":engineFailure?"Обработка остановлена":"Фильтр выключен";
+            if(closing)return;bool running=engine.IsRunning,working=busy||automaticConnecting||updateStartupGate!=null,editable=!working&&!running&&!recoveryPolicy.Pending,direct=mode.SelectedIndex==0;
+            status.Text=working?workState+"…":running?"Фильтр включён":recoveryPolicy.Pending?"Ожидание повтора":engineFailure?"Обработка остановлена":"Фильтр выключен";
             if(theme!=null)status.ForeColor=busy?theme.Text:running?theme.Success:engineFailure?theme.Error:theme.Text;
-            primary.Text=PrimaryCaption(busy,running);check.Enabled=!busy;
+            primary.Text=!working&&!running&&recoveryPolicy.Pending?"Отменить повтор":PrimaryCaption(working,running);check.Enabled=!working;
             bugReport.Enabled=!preview&&!closing&&!exportingReport;bugReport.Text=exportingReport?"Сохранение…":"Баг-репорт";
             contact.Enabled=!preview&&!closing;
             emailContact.Enabled=!preview&&!closing;
             tips.SetToolTip(primary,busy&&running?"Остановить подбор и выключить фильтр. Соединения могут прерваться.":busy?"Отменить текущую операцию.":running?"Выключить фильтр, не закрывая окно.":"Включить фильтр. Если Windows запросит права, подтвердите и нажмите кнопку ещё раз.");
             tips.SetToolTip(summary,summary.Text);summary.AccessibleDescription=summary.Text;
-            tune.Enabled=editable&&direct;exportTuning.Enabled=!busy&&lastTuning!=null;mode.Enabled=editable;strategy.Enabled=editable&&mode.SelectedIndex!=2;
-            manageDomains.Enabled=editable&&direct;ignoreVpn.Enabled=!busy&&direct;
+            tune.Enabled=editable&&direct;exportTuning.Enabled=!working&&lastTuning!=null;mode.Enabled=editable;strategy.Enabled=editable&&mode.SelectedIndex!=2;
+            manageDomains.Enabled=editable&&direct;ignoreVpn.Enabled=!working&&direct;
             presetChoice.Enabled=editable;savePreset.Enabled=savePresetAs.Enabled=editable&&!preview;
-            discordStrategy.Enabled=editable&&direct&&Selected().Contains("discord");tuneDiscord.Enabled=!busy&&direct&&Selected().Contains("discord");
+            discordStrategy.Enabled=editable&&direct&&Selected().Contains("discord");tuneDiscord.Enabled=editable&&direct&&Selected().Contains("discord");
             foreach(var control in selections.Values)control.Enabled=editable;
             custom.Enabled=quic.Enabled=voice.Enabled=telegram.Enabled=publicLists.Enabled=editable&&direct;
             endpoint.Enabled=port.Enabled=find.Enabled=endpoints.Enabled=editable&&!direct;
             elevate.Enabled=editable&&!Engine.IsAdmin();updateLists.Enabled=editable;
-            telegramBridge.Enabled=!preview&&!busy&&!exitPending;
-            startupToggle.Enabled=!preview&&!busy&&!exitPending&&startupState.HasValue&&startupState.Value!=StartupRegistrationState.Enabled&&startupState.Value!=StartupRegistrationState.ForeignEntry;
-            startupRemove.Enabled=!preview&&!busy&&!exitPending&&startupState.HasValue&&(startupState.Value==StartupRegistrationState.Enabled||startupState.Value==StartupRegistrationState.DifferentLocation);
+            telegramBridge.Enabled=!preview&&!working&&!exitPending;
+            startupToggle.Enabled=!preview&&!working&&!exitPending&&startupState.HasValue&&startupState.Value!=StartupRegistrationState.Enabled&&startupState.Value!=StartupRegistrationState.ForeignEntry;
+            startupRemove.Enabled=!preview&&!working&&!exitPending&&startupState.HasValue&&(startupState.Value==StartupRegistrationState.Enabled||startupState.Value==StartupRegistrationState.DifferentLocation);
             settingsNotice.Text=busy?"Параметры недоступны во время операции.":running?"Для изменения параметров выключите фильтр.":"Изменения применяются при включении фильтра.";
-            for(int row=4;row<=6&&row<advancedGrid.RowStyles.Count;row++)
+            for(int row=7;row<=8&&row<advancedGrid.RowStyles.Count;row++)
             {
-                advancedGrid.RowStyles[row].Height=direct?0:row==4?92:row==5?88:82;
+                advancedGrid.RowStyles[row].Height=direct?0:row==7?92:88;
                 foreach(Control control in advancedGrid.Controls)if(advancedGrid.GetRow(control)==row)control.Visible=!direct;
             }
-            if(tray!=null){tray.Text=running?"LocalLink — фильтр включён":busy?"LocalLink — выполняется проверка":"LocalLink — фильтр выключен";trayStop.Enabled=running||busy;}
+            if(tray!=null){tray.Text=running?"LocalLink — фильтр включён":working?"LocalLink — выполняется проверка":recoveryPolicy.Pending?"LocalLink — ожидается повтор":"LocalLink — фильтр выключен";trayStop.Enabled=running||working||recoveryPolicy.Pending;}
             if(lastRunning&&!running&&!busy&&!engineFailure)Write("Обработка остановлена.");lastRunning=running;
+            RefreshApplicationFeatureControls();
+            RefreshAutomaticControls();RefreshPresetExchangeControls();
         }
         static string HumanMethod(string method)
         {
@@ -516,7 +463,8 @@ namespace LocalLink
             var info=engine.TakeUnexpectedExit();if(info==null)return;
             engineFailure=true;
             Record("filter_unexpected_exit","exitCode",info.ExitCode);
-            string message="Движок неожиданно завершился"+(info.ExitCode.HasValue?" · код "+info.ExitCode.Value:" · код недоступен")+". Автоперезапуск не выполняется.";
+            recoveryPolicy.UnexpectedExit(DateTime.UtcNow);
+            string message="Движок неожиданно завершился"+(info.ExitCode.HasValue?" · код "+info.ExitCode.Value:" · код недоступен")+(recoveryPolicy.Pending?". Повторим запуск прежнего метода.":".");
             summary.Text=message;Write(message);
             if(operation!=null)operation.Cancel();
             if(!busy)TryStop();
@@ -539,7 +487,7 @@ namespace LocalLink
             try
             {
                 startupState=new StartupRegistration(Application.ExecutablePath).GetState();
-                startupStatus.Text=startupState==StartupRegistrationState.Enabled?"Автозапуск включён для этой папки. Фильтр запускается вручную.":startupState==StartupRegistrationState.DifferentLocation?"Автозапуск указывает на другую папку LocalLink. Можно обновить путь или убрать запись.":startupState==StartupRegistrationState.ForeignEntry?"Найдена незнакомая запись LocalLink. Она сохранена без изменений.":"Автозапуск выключен. После перемещения папки нужно добавить его заново.";
+                startupStatus.Text=startupState==StartupRegistrationState.Enabled?"Автозапуск включён. "+(connectOnOpen.Checked?"Подключение — автоматически.":"Подключение — кнопкой на главном экране."):startupState==StartupRegistrationState.DifferentLocation?"Автозапуск указывает на другую папку LocalLink.":startupState==StartupRegistrationState.ForeignEntry?"Найдена незнакомая запись LocalLink. Она сохранена без изменений.":"Автозапуск выключен.";
                 startupToggle.Text=startupState==StartupRegistrationState.DifferentLocation?"Обновить путь автозапуска":"Добавить в автозапуск";
             }
             catch(Exception error){RecordFailure("startup",error);startupState=null;startupStatus.Text="Не удалось проверить автозапуск. Реестр не изменён.";}
@@ -553,7 +501,7 @@ namespace LocalLink
                 var registration=new StartupRegistration(Application.ExecutablePath);
                 if(enable)registration.Enable();else registration.Disable();
                 Record("startup_changed","enabled",enable);
-                Write(enable?"Автозапуск приложения добавлен. При входе в Windows оно появится в трее без включения фильтра.":"Автозапуск LocalLink убран. Другие записи Windows не изменены.");
+                Write(enable?"Автозапуск приложения добавлен. Режим подключения — в разделе «Основное».":"Автозапуск LocalLink убран. Другие записи Windows не изменены.");
             }
             catch(Exception error){RecordFailure("startup",error);MessageBox.Show(this,"Не удалось изменить автозапуск. Чужие записи не меняются; проверьте доступ и длину пути к папке LocalLink.","Автозапуск",MessageBoxButtons.OK,MessageBoxIcon.Warning);}
             RefreshStartup();
@@ -639,39 +587,43 @@ namespace LocalLink
             if(!Engine.IsAdmin()){Elevate(resumeStart);return false;}
             return true;
         }
-        async Task<bool> EnsureDependenciesAsync()
+        async Task<bool> EnsureDependenciesAsync(bool requireTelegram=false)
         {
-            if(preview||busy||closing||exitPending)return false;
+            if(preview||busy||updateStartupGate!=null||closing||exitPending)return false;
             // Hidden fixtures never write components or contact download servers.
             if(!persistPreferences)return true;
             Begin("Подготовка");var token=operation.Token;
+            bool includeTelegram=requireTelegram||Selected().Contains("telegram")&&(!automaticConnection.Checked||TelegramDesktopInstalled());
             try
             {
-                var current=await Task.Run(()=>dependencies.Inspect(true,token),token);
+                var current=await Task.Run(()=>dependencies.Inspect(includeTelegram,token),token);
                 if(!current.Ready)
                 {
                     summary.Text="Проверка установленных компонентов…";
-                    await dependencies.ReuseInstalledAsync(true,token);
-                    current=await Task.Run(()=>dependencies.Inspect(true,token),token);
+                    await dependencies.ReuseInstalledAsync(includeTelegram,token);
+                    current=await Task.Run(()=>dependencies.Inspect(includeTelegram,token),token);
                 }
                 token.ThrowIfCancellationRequested();if(closing||IsDisposed)return false;
                 bool retry=false;
                 while(!current.Ready)
                 {
-                    using(var prompt=new SetupPrompt(theme,retry))
+                    using(var prompt=new SetupPrompt(theme,retry,automaticConnection.Checked&&mode.SelectedIndex==0))
+                    {
                         if(prompt.ShowDialog(this)!=DialogResult.Yes){summary.Text="Установка отложена.";return false;}
+                        if(prompt.AutomaticStart){connectOnOpen.Checked=true;SavePreferencesRequired();}
+                    }
                     try
                     {
                         Record("components_install_started");workState="Установка";RefreshControls();
-                        await dependencies.InstallAsync(true,new Progress<DependencyProgress>(p=>
+                        await dependencies.InstallAsync(includeTelegram,new Progress<DependencyProgress>(p=>
                         {if(!closing&&!IsDisposed){summary.Text=p.Message+" "+p.Percent+"%";}}),token);
-                        token.ThrowIfCancellationRequested();current=await Task.Run(()=>dependencies.Inspect(true,token),token);
+                        token.ThrowIfCancellationRequested();current=await Task.Run(()=>dependencies.Inspect(includeTelegram,token),token);
                     }
                     catch(OperationCanceledException){if(token.IsCancellationRequested)throw;retry=true;Record("components_download_failed");}
                     catch(Exception error){RecordFailure("components",error);retry=true;}
                     token.ThrowIfCancellationRequested();if(closing||IsDisposed)return false;
                 }
-                await Task.Run(()=>BootstrapPayload.Ensure(Path.Combine(dependencies.ComponentsRoot,"telegram")),token);
+                if(includeTelegram)await Task.Run(()=>BootstrapPayload.Ensure(Path.Combine(dependencies.ComponentsRoot,"telegram")),token);
                 token.ThrowIfCancellationRequested();
                 summary.Text="Готово к подключению.";Record("components_ready");return true;
             }
@@ -706,20 +658,24 @@ namespace LocalLink
         }
         void Begin(string title)
         {
-            busy=true;workState=title;activeOperation=title=="Подготовка"?"start":title=="Проверка"?"check":title=="Подбор Discord"?"discord_tune":title=="Подбор метода"?"tune":title=="Загрузка списка"?"lists":"none";
-            Record("operation_started","operation",activeOperation,"filterRunning",engine.IsRunning);operation=new CancellationTokenSource();RefreshControls();
+            recoveryPolicy.Pause(true);
+            busy=true;workState=title;activeOperation=title=="Подготовка"?"start":title=="Проверка"?"check":title=="Подбор Discord"?"discord_tune":title=="Подбор метода"?"tune":title=="Загрузка списка"?"lists":title=="Восстановление"?"recovery":title=="Обновление"?"app_update":title=="Автонастройка"?"automatic":"none";
+            Record("operation_started","operation",activeOperation,"filterRunning",engine.IsRunning);operation=automaticConnecting&&automaticLifetime!=null?CancellationTokenSource.CreateLinkedTokenSource(automaticLifetime.Token):new CancellationTokenSource();RefreshControls();
         }
         void End()
         {
             if(busy)Record("operation_finished","operation",activeOperation,"filterRunning",engine.IsRunning);
             activeOperation="none";
             if(operation!=null){operation.Dispose();operation=null;}busy=false;
+            recoveryPolicy.Pause(featureDialogOpen||updatingApplication||automaticConnecting);
             if(closing||IsDisposed)return;
             if(exitPending){exitPending=false;Close();}else RefreshControls();
         }
         void StopOperation()
         {
             if(closing||IsDisposed)return;
+            CancelAutomaticConnection();
+            DisarmRecovery();
             engineFailure=false;
             Record("operation_cancelled","operation",activeOperation);Record("filter_stop_requested");
             if(operation!=null)operation.Cancel();
@@ -731,7 +687,9 @@ namespace LocalLink
         }
         async Task StartAsync()
         {
-            if(busy||preview)return;
+            if(busy||preview||!persistPreferences||automaticConnecting||updateStartupGate!=null)return;
+            if(automaticConnection.Checked&&mode.SelectedIndex==0){await StartAutomaticConnectionAsync();return;}
+            DisarmRecovery();
             Record("filter_start_requested");RecordConfiguration();
             try
             {
@@ -751,6 +709,7 @@ namespace LocalLink
                 if(closing||IsDisposed)return;
                 if(!engine.IsRunning){InspectEngineExit();throw new IOException("Движок завершился при запуске. Не отключайте защиту Windows.");}
                 Record("filter_started");
+                ArmRecovery(spec);
                 var evidence=engine.LastProfileEvidence;if(evidence!=null)Write(evidence.ToDisplayString());
                 summary.Text=mode.SelectedIndex==0?"Фильтр запущен.":"Фильтр запущен для указанного сервера.";Write(summary.Text);
             }
@@ -789,7 +748,7 @@ namespace LocalLink
         void ResetRows(){Record("checks_reset");results.Items.Clear();rows.Clear();rowOrder.Clear();detail.Text="Выберите строку для подробностей.";RefreshDiagnosticsNotice();}
         async Task CheckAsync()
         {
-            if(busy||preview)return;var ids=Selected();if(ids.Count==0){summary.Text="Выберите хотя бы один сервис.";return;}
+            if(busy||automaticConnecting||preview||!persistPreferences)return;var ids=Selected();if(ids.Count==0){summary.Text="Выберите хотя бы один сервис.";return;}
             Save();Begin("Проверка");Record("checks_started","services",ids);ResetRows();summary.Text="Проверяем сайты и публичные узлы приложений";
             try
             {
@@ -807,7 +766,8 @@ namespace LocalLink
         }
         async Task TuneDiscordAsync()
         {
-            if(busy||preview||mode.SelectedIndex!=0||!Selected().Contains("discord"))return;
+            if(busy||automaticConnecting||preview||!persistPreferences||mode.SelectedIndex!=0||!Selected().Contains("discord"))return;
+            DisarmRecovery();
             bool ignoreVpnThisRun=ignoreVpn.Checked;ignoreVpn.Checked=false;
             try
             {
@@ -823,7 +783,7 @@ namespace LocalLink
                 Record("tuning_finished","operation","discord_tune","strategy",result.Strategy,"enabled",result.Verified);
                 if(result.Verified)discordStrategy.SelectedIndex=methods.IndexOf(result.Strategy)+1;
                 summary.Text=result.Verified?"Discord: "+HumanMethod(result.Strategy)+". Фильтр включён; голос проверьте в звонке.":result.Summary;
-                Write(summary.Text);var evidence=engine.LastProfileEvidence;if(evidence!=null)Write(evidence.ToDisplayString());Save();
+                Write(summary.Text);var evidence=engine.LastProfileEvidence;if(evidence!=null)Write(evidence.ToDisplayString());Save();if(result.Verified&&engine.IsRunning){spec.DiscordStrategy=result.Strategy;ArmRecovery(spec);}
             }
             catch(OperationCanceledException){Record("operation_cancelled","operation","discord_tune");TryStop();if(!closing&&!IsDisposed&&!engineFailure)summary.Text="Подбор Discord отменён; исходные методы сохранены, фильтр выключен.";}
             catch(Exception e){RecordFailure("discord_tune",e);InspectEngineExit();TryStop();if(!closing&&!IsDisposed){if(!engineFailure)summary.Text="Подбор Discord не завершён. Исходные методы сохранены; см. журнал.";Write(e.Message);}}
@@ -831,7 +791,8 @@ namespace LocalLink
         }
         async Task TuneAsync()
         {
-            if(busy||preview||engine.IsRunning||mode.SelectedIndex!=0)return;
+            if(busy||automaticConnecting||preview||!persistPreferences||engine.IsRunning||mode.SelectedIndex!=0)return;
+            DisarmRecovery();
             bool ignoreVpnThisRun=ignoreVpn.Checked;ignoreVpn.Checked=false;
             try
             {
@@ -848,7 +809,7 @@ namespace LocalLink
                 Record("tuning_finished","operation","tune","strategy",result.Strategy,"enabled",result.Verified);
                 if(closing||IsDisposed)return;
                 token.ThrowIfCancellationRequested();strategy.SelectedIndex=Math.Max(0,methods.IndexOf(result.Strategy));summary.Text=result.Summary;Write(result.Summary);
-                var evidence=engine.LastProfileEvidence;if(evidence!=null)Write(evidence.ToDisplayString());Save();
+                var evidence=engine.LastProfileEvidence;if(evidence!=null)Write(evidence.ToDisplayString());Save();if(result.Verified&&engine.IsRunning){spec.Strategy=result.Strategy;ArmRecovery(spec);}
             }
             catch(OperationCanceledException){Record("operation_cancelled","operation","tune");TryStop();if(!closing&&!IsDisposed&&!engineFailure)summary.Text="Подбор отменён.";}
             catch(Exception e){RecordFailure("tune",e);InspectEngineExit();TryStop();if(!closing&&!IsDisposed){if(!engineFailure)summary.Text="Подбор не завершён. См. журнал.";Write(e.Message);}}
@@ -888,7 +849,7 @@ namespace LocalLink
         }
         void Elevate(bool resumeStart=false)
         {
-            if(preview||Engine.IsAdmin()||busy||engine.IsRunning)return;
+            if(preview||!persistPreferences||Engine.IsAdmin()||busy||automaticConnecting||updateStartupGate!=null||engine.IsRunning)return;
             Record("elevation_requested");Save();try{using(Process child=Process.Start(new ProcessStartInfo(Application.ExecutablePath,resumeStart?"--elevated-start":"--elevated-restart"){UseShellExecute=true,Verb="runas"})){}exitRequested=true;Close();}
             catch(System.ComponentModel.Win32Exception error){RecordFailure("elevate",error);Record("elevation_cancelled");summary.Text="Повышение прав отменено.";}
         }
@@ -928,28 +889,31 @@ namespace LocalLink
         }
         async Task OpenTelegramBridgeAsync()
         {
-            if(preview||busy||closing||exitPending)return;
+            if(preview||!persistPreferences||busy||automaticConnecting||closing||exitPending)return;
             Record("telegram_open_requested");
             try
             {
-                if(!await EnsureDependenciesAsync())return;
+                if(!await EnsureDependenciesAsync(true))return;
+                LaunchTelegramBridge(false);
+            }
+            catch(Exception e)
+            {
+                RecordFailure("telegram",e);Write("Модуль Telegram не запущен: "+e.Message);
+                MessageBox.Show(this,"Не удалось открыть модуль Telegram.","Telegram",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+            }
+        }
+        void LaunchTelegramBridge(bool automatic)
+        {
                 string folder=Path.Combine(dependencies.ComponentsRoot,"telegram");
                 string executable=BootstrapPayload.Ensure(folder);
                 if(!File.Exists(executable))throw new FileNotFoundException("Не удалось подготовить Telegram. Повторите запуск.");
                 // Verified adjacent resource only: no PATH search, URL, shell verb, or user-supplied arguments.
                 if((File.GetAttributes(folder)&FileAttributes.ReparsePoint)!=0||(File.GetAttributes(executable)&FileAttributes.ReparsePoint)!=0)
                     throw new IOException("Модуль Telegram должен находиться в папке сборки, а не по символической ссылке.");
-                using(Process child=Process.Start(new ProcessStartInfo(executable){UseShellExecute=false,WorkingDirectory=folder}))
+                using(Process child=Process.Start(new ProcessStartInfo(executable){UseShellExecute=false,WorkingDirectory=folder,Arguments=automatic?"--auto-setup":""}))
                 {if(child==null)throw new IOException("Windows не подтвердила запуск модуля.");}
                 Write("Открыт модуль Telegram.");
                 Record("telegram_opened");
-            }
-            catch(Exception e)
-            {
-                RecordFailure("telegram",e);
-                Write("Модуль Telegram не запущен: "+e.Message);
-                MessageBox.Show(this,"Не удалось открыть локальный мост Telegram.\r\n"+e.Message,"Telegram",MessageBoxButtons.OK,MessageBoxIcon.Warning);
-            }
         }
         void OnClosing(object sender,FormClosingEventArgs args)
         {
@@ -957,10 +921,12 @@ namespace LocalLink
             if(!preview&&!exitRequested&&args.CloseReason==CloseReason.UserClosing)
             {args.Cancel=true;HideToTray();return;}
             if(exportingReport&&args.CloseReason==CloseReason.UserClosing){args.Cancel=true;exitPending=true;return;}
+            CancelAutomaticConnection();
+            DisarmRecovery();
             if(operation!=null)operation.Cancel();
             // Explicit exit waits for cancelled UI work to finish, so async callbacks cannot
             // race disposal. Session shutdown must never wait for this cancellation path.
-            if(busy&&args.CloseReason==CloseReason.UserClosing)
+            if((busy||automaticConnecting)&&args.CloseReason==CloseReason.UserClosing)
             {
                 args.Cancel=true;exitPending=true;TryStop();workState="Завершение";summary.Text="Завершаем текущую проверку и выходим…";RefreshControls();return;
             }
@@ -978,6 +944,7 @@ namespace LocalLink
         void DisposeOwnedResources()
         {
             if(resourcesDisposed)return;resourcesDisposed=true;closing=true;
+            DisposeApplicationFeatures();
             SystemEvents.UserPreferenceChanged-=ThemeChanged;timer.Stop();timer.Dispose();
             if(tray!=null){tray.Visible=false;tray.Dispose();tray=null;}
             if(trayMenu!=null){trayMenu.Dispose();trayMenu=null;}

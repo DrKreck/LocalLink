@@ -125,7 +125,7 @@ public static class UsabilityFlowTests
         var history=(DiagnosticHistory)Value(form,"history");
         Check(!history.PersistenceAvailable&&history.Snapshot().Events.Count==0,scope+": preview creates no diagnostic history");
         var snapshot=(BugReportSnapshot)typeof(MainForm).GetMethod("CaptureBugReport",Private).Invoke(form,null);
-        Check(snapshot.AppVersion=="0.8.5.0",scope+": report has current version");
+        Check(snapshot.AppVersion==typeof(MainForm).Assembly.GetName().Version.ToString(),scope+": report has current version");
         Check(snapshot.Mode>=0&&snapshot.Mode<=2,scope+": report configuration is captured");
         Check(!snapshot.FilterRunning,scope+": report cannot start a filter");
         Check(Value(form,"tray")==null&&!((Engine)Value(form,"engine")).IsRunning,scope+": report capture has no live side effects");
@@ -200,11 +200,15 @@ public static class UsabilityFlowTests
             if(page!=null)Check(InForm(form,page)==InForm(form,shell.MainContent),scope+": settings fills complete body "+cycle);
             Check(Object.ReferenceEquals(main,shell.MainContent)&&Object.ReferenceEquals(drawer,shell.SettingsContent),scope+": hosts not replaced "+cycle);
             snapshot.CheckUnchanged(rows,scope+"/settings-open"+cycle);
+            Invoke(form,"SelectSettingsSection","advanced");Pump(form);
+            Check(details.Visible,scope+": technical details are reachable only in Advanced "+cycle);
             details.Checked=true; Pump(form);
             snapshot.CheckOrder(rows,results,all,scope+"/details-open"+cycle);
             snapshot.CheckUnchanged(rows,scope+"/details-open"+cycle);
             details.Checked=false; Pump(form);
             snapshot.CheckOrder(rows,results,compact,scope+"/details-close"+cycle);
+            Invoke(form,"SelectSettingsSection","basic");Pump(form);
+            Check(!details.Visible,scope+": technical details are hidden from Basic "+cycle);
             if(cycle==0)Check(SendShellKey(shell,Keys.Escape),scope+": Escape handled "+cycle);
             else if(cycle==1){Check(close is Button,scope+": back action is clickable");if(close is Button)((Button)close).PerformClick();}
             else Check(SendShellKey(shell,Keys.Alt|Keys.Oemcomma),scope+": settings shortcut closes page "+cycle);

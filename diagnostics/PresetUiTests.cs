@@ -19,7 +19,9 @@ internal static class PresetUiTests
         try
         {
             if (args.Length == 1 && args[0] == "--isolated") return Run();
-            string fixture = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "preset-ui-fixtures", Guid.NewGuid().ToString("N"));
+            // Keep nested transactional preset paths below Framework MAX_PATH
+            // even when the checked-out project has a deep Windows path.
+            string fixture = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "pui", Guid.NewGuid().ToString("N").Substring(0,12));
             Directory.CreateDirectory(fixture);
             var domain = AppDomain.CreateDomain("preset-ui", null, new AppDomainSetup { ApplicationBase = fixture, ConfigurationFile = Assembly.GetExecutingAssembly().Location + ".config" });
             try { return domain.ExecuteAssembly(Assembly.GetExecutingAssembly().Location, new[] { "--isolated" }); }

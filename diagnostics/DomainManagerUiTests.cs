@@ -42,8 +42,8 @@ internal static class DomainManagerUiTests
     { if (!value) { Console.Error.WriteLine("ASSERTION FAILED: " + message); throw new Exception(message); } checks++; }
     static T Value<T>(object target, string field)
     { return (T)target.GetType().GetField(field, Private).GetValue(target); }
-    static void Invoke(object target, string method)
-    { target.GetType().GetMethod(method, Private).Invoke(target, null); }
+    static void Invoke(object target, string method,params object[] args)
+    { target.GetType().GetMethod(method, Private).Invoke(target, args); }
     static void Wait(Func<bool> ready, string message)
     {
         var watch = Stopwatch.StartNew();
@@ -221,22 +221,36 @@ internal static class DomainManagerUiTests
             Show(form); Value<System.Windows.Forms.Timer>(form, "timer").Stop();
             var shell = Value<AppShell>(form, "shell"); shell.OpenSettings(); Pump(20);
             var ignore = Value<CheckBox>(form, "ignoreVpn"); var manage = Value<Button>(form, "manageDomains");
+            Invoke(form,"SelectSettingsSection","advanced");Pump(20);
             Check(!ignore.Checked && ignore.Enabled && ignore.Visible, "VPN override starts unarmed and visible in settings");
+            Invoke(form,"SelectSettingsSection","applications");Pump(20);
             Check(manage.Enabled && manage.Visible, "domain manager is directly discoverable in settings");
             var email = Value<Button>(form, "emailContact");
             Check(IsInside(email, shell.MainContent) && email.AccessibleName.Contains("kirill0063@gmail.com"), "email contact belongs to main page and names requested address");
+            Invoke(form,"SelectSettingsSection","profiles");Pump(20);
             foreach (string name in new[] { "presetChoice", "savePreset", "savePresetAs" })
+            {
                 Check(IsInside(Value<Control>(form, name), shell.SettingsContent), "preset control belongs to settings: " + name);
+                Check(Value<Control>(form,name).Visible,"preset control is visible on its own section: "+name);
+            }
+            Check(Value<ComboBox>(form,"presetChoice").Enabled,"preset selection is readable on its active section");
+            Check(!Value<Button>(form,"savePreset").Enabled&&!Value<Button>(form,"savePresetAs").Enabled,"preview keeps preset-write actions disabled");
+            Invoke(form,"SelectSettingsSection","applications");Pump(20);
             Screenshot(form, "domain-settings-dark");
+            Invoke(form,"SelectSettingsSection","advanced");Pump(20);
             ignore.Checked = true;
             var captured = (AppSettings)form.GetType().GetMethod("CaptureSettings", Private).Invoke(form, null);
             Check(!typeof(AppSettings).GetFields().Any(x => x.Name.IndexOf("IgnoreVpn", StringComparison.OrdinalIgnoreCase) >= 0), "VPN override is never persisted as a preference");
             Check(captured.Services.Count > 0, "ordinary preferences still captured");
             form.GetType().GetField("busy", Private).SetValue(form, true); Invoke(form, "RefreshControls");
-            Check(!ignore.Enabled && !manage.Enabled, "new actions unavailable during operations");
+            Check(ignore.Visible&&!ignore.Enabled,"VPN override is disabled on its active section during an operation");
+            Invoke(form,"SelectSettingsSection","applications");Pump(20);
+            Check(manage.Visible&&!manage.Enabled,"domain manager is disabled on its active section during an operation");
             form.GetType().GetField("busy", Private).SetValue(form, false); Invoke(form, "RefreshControls");
             Value<ComboBox>(form, "mode").SelectedIndex = 1; Invoke(form, "RefreshControls");
-            Check(!ignore.Enabled && !manage.Enabled, "Direct-only controls disabled in VPN helper mode");
+            Check(ignore.Visible&&!ignore.Enabled,"VPN override is disabled on its active section in VPN helper mode");
+            Invoke(form,"SelectSettingsSection","applications");Pump(20);
+            Check(manage.Visible&&!manage.Enabled,"domain manager is disabled on its active section in VPN helper mode");
             form.GetType().GetField("exitRequested", Private).SetValue(form, true); form.Close(); Pump(20);
         }
     }

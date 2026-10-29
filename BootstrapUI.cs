@@ -8,8 +8,12 @@ namespace LocalLink
 {
     public sealed class SetupPrompt : Form
     {
-        public SetupPrompt(AppTheme theme, bool retry = false)
+        readonly CheckBox automaticStart=new ThemedCheckBox();
+        readonly bool automaticOffered;
+        public bool AutomaticStart {get{return automaticOffered&&automaticStart.Checked;}}
+        public SetupPrompt(AppTheme theme, bool retry = false,bool automatic = false)
         {
+            automaticOffered=automatic;
             Text = "Компоненты LocalLink";
             Font = AppTheme.Font(10.5f, FontStyle.Regular);
             ClientSize = new Size(500, 232); AutoScaleMode = AutoScaleMode.Dpi;
@@ -28,6 +32,13 @@ namespace LocalLink
             var later = new ThemedButton { Text = "Не сейчас", AccessibleName = "Не сейчас", DialogResult = DialogResult.No,
                 Location = new Point(354, 168), Size = new Size(122, 40) };
             Controls.AddRange(new Control[] { message, purpose, caption, install, later }); AcceptButton = install; CancelButton = later;
+            if(automatic)
+            {
+                ClientSize=new Size(500,274);
+                automaticStart.Text="Подключаться при открытии LocalLink";automaticStart.Checked=true;automaticStart.AutoSize=true;
+                automaticStart.Location=new Point(24,120);automaticStart.AccessibleName=automaticStart.Text;
+                caption.Top=156;install.Top=later.Top=210;Controls.Add(automaticStart);
+            }
             HandleCreated += delegate { theme.Apply(this); };
             theme.Apply(this);
         }

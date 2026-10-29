@@ -1,5 +1,6 @@
 // Synthetic previews and an isolated report-acceptance window; never user preferences or a real filter.
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
@@ -55,6 +56,52 @@ public static class UsabilityPreview
             }
             form.Close();Application.DoEvents();
         }
-        Console.WriteLine("Eight own preview images. No filter, network or preference writes.");return 0;
+        RenderSettingsSections(output);
+        Console.WriteLine("88 own preview images: main views plus all five settings sections, 980/820 windows, dark/light, geometric 100–200% scales. No filter, network or preference writes.");return 0;
+    }
+    static void RenderSettingsSections(string output)
+    {
+        foreach(bool dark in new[]{true,false})foreach(bool minimum in new[]{false,true})foreach(float scale in new[]{1f,1.25f,1.5f,2f})
+        {
+            var fonts=new List<Font>();
+            try
+            {
+                using(var form=new MainForm(true,dark,!dark,null,false))
+                {
+                    form.ShowInTaskbar=false;form.StartPosition=FormStartPosition.Manual;form.Location=new Point(-32000,-32000);
+                    if(minimum)form.Size=form.MinimumSize;
+                    form.Show();((Timer)typeof(MainForm).GetField("timer",Private).GetValue(form)).Stop();
+                    form.AutoScaleMode=AutoScaleMode.None;
+                    var controls=Flatten(form);var originals=new Dictionary<Control,Font>();
+                    foreach(var control in controls)originals.Add(control,control.Font);
+                    form.SuspendLayout();form.Scale(new SizeF(scale,scale));
+                    foreach(var control in controls)
+                    {
+                        var original=originals[control];var font=new Font(original.FontFamily,original.SizeInPoints*scale,original.Style,GraphicsUnit.Point);
+                        fonts.Add(font);control.Font=font;
+                    }
+                    form.ResumeLayout(true);
+                    var shell=(AppShell)typeof(MainForm).GetField("shell",Private).GetValue(form);shell.OpenSettings();
+                    foreach(string section in new[]{"basic","applications","profiles","updates","advanced"})
+                    {
+                        typeof(MainForm).GetMethod("SelectSettingsSection",Private).Invoke(form,new object[]{section});form.PerformLayout();Application.DoEvents();
+                        using(var bitmap=new Bitmap(form.ClientSize.Width,form.ClientSize.Height))
+                        {
+                            form.Controls[0].DrawToBitmap(bitmap,new Rectangle(Point.Empty,form.ClientSize));
+                            foreach(Control page in shell.Controls.Find("SettingsPage",true))
+                                if(page.Visible)page.DrawToBitmap(bitmap,new Rectangle(form.PointToClient(page.PointToScreen(Point.Empty)),page.Size));
+                            string name="settings-"+section+"-"+(dark?"dark":"light")+"-"+(minimum?"820":"980")+"-"+(int)(scale*100)+".png";
+                            bitmap.Save(Path.Combine(output,name));
+                        }
+                    }
+                    form.Close();Application.DoEvents();
+                }
+            }
+            finally{foreach(var font in fonts)font.Dispose();}
+        }
+    }
+    static List<Control> Flatten(Control root)
+    {
+        var result=new List<Control>{root};foreach(Control child in root.Controls)result.AddRange(Flatten(child));return result;
     }
 }
